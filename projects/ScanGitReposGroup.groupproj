@@ -1,0 +1,48 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{E9E34729-621F-471D-986E-09EA6C7E8E17}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="ScanGitRepos.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="ScanGitReposTests.dproj">
+            <Dependencies/>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="ScanGitRepos">
+        <MSBuild Projects="ScanGitRepos.dproj"/>
+    </Target>
+    <Target Name="ScanGitRepos:Clean">
+        <MSBuild Projects="ScanGitRepos.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ScanGitRepos:Make">
+        <MSBuild Projects="ScanGitRepos.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ScanGitReposTests">
+        <MSBuild Projects="ScanGitReposTests.dproj"/>
+    </Target>
+    <Target Name="ScanGitReposTests:Clean">
+        <MSBuild Projects="ScanGitReposTests.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ScanGitReposTests:Make">
+        <MSBuild Projects="ScanGitReposTests.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="ScanGitRepos;ScanGitReposTests"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="ScanGitRepos:Clean;ScanGitReposTests:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="ScanGitRepos:Make;ScanGitReposTests:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>
