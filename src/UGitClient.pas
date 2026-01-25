@@ -60,7 +60,11 @@ type
     function TryIsInsideWorkTree(const aRepoRoot: string; out aIsInside: Boolean; out aError: string): Boolean;
     function TryGetBranch(const aRepoRoot: string; out aBranch: string; out aError: string): Boolean;
     function TryGetUpstream(const aRepoRoot: string; out aUpstream: string; out aError: string): Boolean;
+    function TryGetRemoteUrl(const aRepoRoot: string; const aRemote: string; out aRemoteUrl: string;
+      out aError: string): Boolean;
     function TryGetOriginUrl(const aRepoRoot: string; out aOriginUrl: string; out aError: string): Boolean;
+    function TryFetchRemote(const aRepoRoot: string; const aRemote: string; const aTimeoutMs: Cardinal;
+      out aError: string): Boolean;
     function TryFetchOrigin(const aRepoRoot: string; const aTimeoutMs: Cardinal; out aError: string): Boolean;
     function TryGetStatusPorcelain(const aRepoRoot: string; out aLines: TArray<string>; out aError: string): Boolean;
     function TryGetAheadBehind(const aRepoRoot: string; const aUpstream: string; out aAhead: Integer;
@@ -535,13 +539,21 @@ begin
   Result := True;
 end;
 
-function TGitClient.TryGetOriginUrl(const aRepoRoot: string; out aOriginUrl: string; out aError: string): Boolean;
+function TGitClient.TryGetRemoteUrl(const aRepoRoot: string; const aRemote: string; out aRemoteUrl: string;
+  out aError: string): Boolean;
 var
   lRes: TGitResult;
   lErr: string;
 begin
-  aOriginUrl := '';
-  if not TryRunGit(aRepoRoot, ['remote', 'get-url', 'origin'], lRes, lErr, 0) then
+  aRemoteUrl := '';
+  aError := '';
+  if aRemote.Trim = '' then
+  begin
+    aError := 'remote name is required';
+    Exit(False);
+  end;
+
+  if not TryRunGit(aRepoRoot, ['remote', 'get-url', aRemote], lRes, lErr, 0) then
   begin
     aError := lErr;
     Exit(False);
@@ -549,19 +561,30 @@ begin
   if lRes.ExitCode = 0 then
   begin
     if Length(lRes.OutputLines) > 0 then
-      aOriginUrl := lRes.OutputLines[0].Trim;
+      aRemoteUrl := lRes.OutputLines[0].Trim;
   end;
   Result := True;
 end;
 
-function TGitClient.TryFetchOrigin(const aRepoRoot: string; const aTimeoutMs: Cardinal; out aError: string): Boolean;
+function TGitClient.TryGetOriginUrl(const aRepoRoot: string; out aOriginUrl: string; out aError: string): Boolean;
+begin
+  Result := TryGetRemoteUrl(aRepoRoot, 'origin', aOriginUrl, aError);
+end;
+
+function TGitClient.TryFetchRemote(const aRepoRoot: string; const aRemote: string; const aTimeoutMs: Cardinal;
+  out aError: string): Boolean;
 var
   lRes: TGitResult;
   lErr: string;
   lRetry: Boolean;
 begin
   aError := '';
-  if not TryRunGit(aRepoRoot, ['fetch', '--prune', 'origin'], lRes, lErr, aTimeoutMs) then
+  if aRemote.Trim = '' then
+  begin
+    aError := 'remote name is required';
+    Exit(False);
+  end;
+  if not TryRunGit(aRepoRoot, ['fetch', '--prune', aRemote], lRes, lErr, aTimeoutMs) then
   begin
     aError := lErr;
     Exit(False);
@@ -574,7 +597,7 @@ begin
   if lRetry then
   begin
     Sleep(3000);
-    if not TryRunGit(aRepoRoot, ['fetch', '--prune', 'origin'], lRes, lErr, aTimeoutMs) then
+    if not TryRunGit(aRepoRoot, ['fetch', '--prune', aRemote], lRes, lErr, aTimeoutMs) then
     begin
       aError := lErr;
       Exit(False);
@@ -584,6 +607,11 @@ begin
     aError := aError + ' | retry: ' + lRes.OutputText.Trim;
   end;
   Result := False;
+end;
+
+function TGitClient.TryFetchOrigin(const aRepoRoot: string; const aTimeoutMs: Cardinal; out aError: string): Boolean;
+begin
+  Result := TryFetchRemote(aRepoRoot, 'origin', aTimeoutMs, aError);
 end;
 
 function TGitClient.TryGetStatusPorcelain(const aRepoRoot: string; out aLines: TArray<string>; out aError: string): Boolean;

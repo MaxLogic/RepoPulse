@@ -1396,6 +1396,8 @@ var
   lEvent: TUiEvent;
   lMatched: TArray<string>;
   lExisting: TRepoStatus;
+  lFetchRemote: string;
+  lSlashPos: integer;
 begin
   if fShuttingDown then
     Exit;
@@ -1410,8 +1412,19 @@ begin
   end;
 
   lMatched := [];
+  lFetchRemote := '';
   if fRepoStatusMap.TryGetValue(aRepoRoot, lExisting) then
+  begin
     lMatched := lExisting.MatchedFolders;
+    if lExisting.Upstream <> '' then
+    begin
+      lSlashPos := lExisting.Upstream.IndexOf('/');
+      if lSlashPos > 0 then
+        lFetchRemote := lExisting.Upstream.Substring(0, lSlashPos);
+    end;
+  end;
+  if lFetchRemote = '' then
+    lFetchRemote := 'origin';
 
   BeginActionBusy;
   try
@@ -1430,7 +1443,7 @@ begin
             TRepoAction.raPull: lOk := fGit.TryPull(aRepoRoot, lErr);
             TRepoAction.raCommit: lOk := fGit.TryCommit(aRepoRoot, aMessage, lErr);
             TRepoAction.raPush: lOk := fGit.TryPush(aRepoRoot, lErr);
-            TRepoAction.raFetch: lOk := fGit.TryFetchOrigin(aRepoRoot, 60000, lErr);
+            TRepoAction.raFetch: lOk := fGit.TryFetchRemote(aRepoRoot, lFetchRemote, 60000, lErr);
           end;
 
           if lOk then
