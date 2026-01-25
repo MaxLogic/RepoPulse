@@ -356,7 +356,10 @@ var
   lErr: string;
   lBranch: string;
   lOriginUrl: string;
+  lRemoteName: string;
+  lRemoteUrl: string;
   lHasOrigin: boolean;
+  lHasRemote: boolean;
   lUpstream: string;
   lCanCompare: boolean;
   lAhead: integer;
@@ -378,6 +381,7 @@ var
   lRes: TGitResult;
   lSymbolic: TGitResult;
   lRefLine: string;
+  lSlashPos: integer;
 begin
   aStatus := default(TRepoStatus);
 
@@ -442,11 +446,36 @@ begin
     end;
   end;
 
+  lRemoteName := '';
+  lRemoteUrl := '';
+  if lUpstream <> '' then
+  begin
+    lSlashPos := lUpstream.IndexOf('/');
+    if lSlashPos > 0 then
+      lRemoteName := lUpstream.Substring(0, lSlashPos);
+  end;
+
+  if lRemoteName <> '' then
+  begin
+    if SameText(lRemoteName, 'origin') then
+      lRemoteUrl := lOriginUrl
+    else if not fGit.TryGetRemoteUrl(aRepoRoot, lRemoteName, lRemoteUrl, lErr) then
+      lRemoteUrl := '';
+  end;
+
+  if (lRemoteName = '') and lHasOrigin then
+  begin
+    lRemoteName := 'origin';
+    lRemoteUrl := lOriginUrl;
+  end;
+
+  lHasRemote := lRemoteName <> '';
+
   lDoFetch := False;
   lFetchOk := True;
   lFetchErr := '';
   lCacheHit := False;
-  if lHasOrigin then
+  if lHasRemote then
   begin
     if aTtlSeconds <= 0 then
     begin
@@ -493,7 +522,7 @@ begin
       end else begin
         if IsCancelled then
           exit(False);
-        lFetchOk := fGit.TryFetchOrigin(aRepoRoot, cFetchTimeoutMs, lFetchErr);
+        lFetchOk := fGit.TryFetchRemote(aRepoRoot, lRemoteName, cFetchTimeoutMs, lFetchErr);
       end;
       if lFetchOk then
         LogDebug('Fetch ok: ' + aRepoRoot)
@@ -512,7 +541,7 @@ begin
 
   lAhead := 0;
   lBehind := 0;
-  lCanCompare := lHasOrigin and (lUpstream <> '');
+  lCanCompare := lHasRemote and (lUpstream <> '');
   if lCanCompare then
   begin
     if IsCancelled then
@@ -523,7 +552,7 @@ begin
   aStatus.RepoRoot := aRepoRoot;
   aStatus.MatchedFolders := aMatched;
   aStatus.Branch := lBranch;
-  aStatus.HasOrigin := lHasOrigin;
+  aStatus.HasOrigin := lHasRemote;
   aStatus.Upstream := lUpstream;
   aStatus.CanCompare := lCanCompare;
   aStatus.Ahead := lAhead;
@@ -550,7 +579,7 @@ begin
   begin
     lUpdate := default(TRepoCacheUpdate);
     lUpdate.Key := aRepoRoot.ToLowerInvariant;
-    lUpdate.OriginUrl := lOriginUrl;
+    lUpdate.OriginUrl := lRemoteUrl;
     lUpdate.LastFetchUtc := DateToISO8601(TTimeZone.Local.ToUniversalTime(now), True);
     lUpdate.LastFetchOk := lFetchOk;
     lUpdate.LastFetchError := lFetchErr;
