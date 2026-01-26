@@ -68,3 +68,8 @@ projects/dcu/
 *.groupproj.local
 *.log
 TestResults.xml
+/build-delphi.sh
+/build-delphi.bat
+/build-and-run-tests.sh
+/build-and-run-tests.bat
+/TASKS.md
