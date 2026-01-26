@@ -8,7 +8,7 @@ uses
   Winapi.ShellAPI, Winapi.Windows,
   Vcl.Clipbrd, Vcl.ComCtrls, Vcl.Controls, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Forms, Vcl.Graphics,
   Vcl.Menus, Vcl.StdCtrls,
-  AutoFree, AutoHourGlass, CancelToken, MaxLogic.Logger, maxLogic.ioutils,
+  AutoFree, AutoHourGlass, CancelToken, MaxLogic.ApplicationMessageManager, MaxLogic.Logger, maxLogic.ioutils,
   UAppSettings, UGitClient, UModels, URepoScanner, UUiEventQueue;
 
 type
@@ -97,6 +97,7 @@ type
     fPopupRepoRoot: string;
     fRepoStatusMap: TDictionary<string, TRepoStatus>;
     fStatusFilter: TRepoFilter;
+    fRedirectMouseWheel: TAppMessagehandlerRedirectMouseWheel;
     procedure LoadSettingsToUi;
     function ReadSettingsFromUi(out aError: string): Boolean;
     function EditIgnoreDirsFile(const aPath: string): Boolean;
@@ -264,6 +265,7 @@ begin
   LoadSettingsToUi;
   SetScanningState(False);
   pbProgress.Visible := False;
+  fRedirectMouseWheel := TAppMessagehandlerRedirectMouseWheel.Create;
   tmrUi.Interval := 100;
   tmrUi.Enabled := True;
   UpdateStatusText(rsStatusReady);
@@ -275,6 +277,7 @@ procedure TfrmMain.FormDestroy(Sender: TObject);
 begin
   fShuttingDown := True;
   tmrUi.Enabled := False;
+  FreeAndNil(fRedirectMouseWheel);
 
   if fScanThread <> nil then
   begin
@@ -1589,6 +1592,7 @@ procedure TfrmMain.sbReposResize(Sender: TObject);
 begin
   UpdateRepoCardWidths;
 end;
+
 
 procedure TfrmMain.UpdateRepoCardWidths;
 var
