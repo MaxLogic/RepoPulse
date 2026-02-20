@@ -382,6 +382,11 @@ var
   lSymbolic: TGitResult;
   lRefLine: string;
   lSlashPos: integer;
+  lGitDirNorm: string;
+  lIsSubmodule: Boolean;
+  lSubmoduleMainRef: string;
+  lCanFastForwardToMain: Boolean;
+  lFfRes: TGitResult;
 begin
   aStatus := default(TRepoStatus);
 
@@ -408,6 +413,13 @@ begin
   begin
     if (not lDiag.ModulesInfo.Writable) or lDiag.ModulesInfo.ReadOnly then
       lCanWriteFetch := False;
+  end;
+
+  lIsSubmodule := False;
+  if lDiag.GitMarkerIsFile and (lDiag.GitDirPath <> '') then
+  begin
+    lGitDirNorm := lDiag.GitDirPath.Replace('/', '\').ToLowerInvariant;
+    lIsSubmodule := lGitDirNorm.Contains('\.git\modules\');
   end;
 
   if not fGit.TryGetBranch(aRepoRoot, lBranch, lErr) then
@@ -531,6 +543,20 @@ begin
     end;
   end;
 
+  lSubmoduleMainRef := '';
+  lCanFastForwardToMain := True;
+  if lIsSubmodule and lHasOrigin then
+  begin
+    if fGit.TryGetPreferredOriginMainRef(aRepoRoot, lSubmoduleMainRef, lErr) and (lSubmoduleMainRef <> '') then
+    begin
+      if fGit.TryRunGit(aRepoRoot, ['merge-base', '--is-ancestor', 'HEAD', lSubmoduleMainRef], lFfRes, lErr, 0) then
+      begin
+        if lFfRes.ExitCode = 1 then
+          lCanFastForwardToMain := False;
+      end;
+    end;
+  end;
+
   if IsCancelled then
     exit(False);
 
@@ -552,6 +578,10 @@ begin
   aStatus.RepoRoot := aRepoRoot;
   aStatus.MatchedFolders := aMatched;
   aStatus.Branch := lBranch;
+  aStatus.IsSubmodule := lIsSubmodule;
+  aStatus.SubmoduleMainRemoteRef := lSubmoduleMainRef;
+  aStatus.SubmoduleNeedsMainFastForward := lIsSubmodule and (lSubmoduleMainRef <> '') and
+    (not lCanFastForwardToMain);
   aStatus.HasOrigin := lHasRemote;
   aStatus.Upstream := lUpstream;
   aStatus.CanCompare := lCanCompare;
@@ -564,7 +594,8 @@ begin
   aStatus.FetchFailed := lDoFetch and not lFetchOk;
   aStatus.FetchError := lFetchErr;
   aStatus.HasProblem := aStatus.FetchFailed or aStatus.IsDirty or aStatus.IsOutOfDate or
-    aStatus.HasUnpushed or (not aStatus.HasOrigin) or (aStatus.HasOrigin and (aStatus.Upstream = ''));
+    aStatus.HasUnpushed or (not aStatus.HasOrigin) or (aStatus.HasOrigin and (aStatus.Upstream = '')) or
+    aStatus.SubmoduleNeedsMainFastForward;
 
   aStatus.GitDirPath := lDiag.GitDirPath;
   aStatus.GitDirWritable := lDiag.GitDirInfo.Writable;

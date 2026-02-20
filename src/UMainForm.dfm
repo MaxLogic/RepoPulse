@@ -558,6 +558,10 @@ object frmMain: TfrmMain
       Caption = 'Fetch'
       OnClick = RepoMenuClick
     end
+    object miRepoFixSubmoduleMain: TMenuItem
+      Caption = 'Fix submodule to remote main'
+      OnClick = RepoMenuClick
+    end
     object miRepoOpenFolder: TMenuItem
       Caption = 'Open folder'
       OnClick = RepoMenuClick
