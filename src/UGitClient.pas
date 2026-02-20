@@ -69,13 +69,17 @@ type
     function TryGetStatusPorcelain(const aRepoRoot: string; out aLines: TArray<string>; out aError: string): Boolean;
     function TryGetAheadBehind(const aRepoRoot: string; const aUpstream: string; out aAhead: Integer;
       out aBehind: Integer; out aError: string): Boolean;
+    function TryGetPreferredOriginMainRef(const aRepoRoot: string; out aMainRef: string; out aError: string): Boolean;
     function TryGetGitWriteDiagnostics(const aRepoRoot: string; out aDiag: TGitWriteDiagnostics;
       out aError: string): Boolean;
     function TryPull(const aRepoRoot: string; out aError: string): Boolean;
     function TryPush(const aRepoRoot: string; out aError: string): Boolean;
     function TryCommit(const aRepoRoot: string; const aMessage: string; out aError: string): Boolean;
+    function TryFixSubmoduleFastForwardToMain(const aRepoRoot: string; const aMainRef: string;
+      out aError: string): Boolean;
     class function ParseStatusPorcelain(const aLines: TArray<string>): TGitStatusParse; static;
     class function ParseAheadBehind(const aLine: string; out aAhead: Integer; out aBehind: Integer): Boolean; static;
+    class function IsPullConflictError(const aError: string): Boolean; static;
   end;
 
 implementation
@@ -710,6 +714,37 @@ begin
     aError := 'failed to parse ahead/behind';
 end;
 
+function TGitClient.TryGetPreferredOriginMainRef(const aRepoRoot: string; out aMainRef: string;
+  out aError: string): Boolean;
+var
+  lRes: TGitResult;
+  lErr: string;
+begin
+  aMainRef := '';
+  aError := '';
+
+  if not TryRunGit(aRepoRoot, ['show-ref', '--verify', '--quiet', 'refs/remotes/origin/main'], lRes, lErr, 0) then
+  begin
+    aError := lErr;
+    Exit(False);
+  end;
+  if lRes.ExitCode = 0 then
+  begin
+    aMainRef := 'origin/main';
+    Exit(True);
+  end;
+
+  if not TryRunGit(aRepoRoot, ['show-ref', '--verify', '--quiet', 'refs/remotes/origin/master'], lRes, lErr, 0) then
+  begin
+    aError := lErr;
+    Exit(False);
+  end;
+  if lRes.ExitCode = 0 then
+    aMainRef := 'origin/master';
+
+  Result := True;
+end;
+
 function TGitClient.GetWriteAccessInfo(const aPath: string): TWriteAccessInfo;
 var
   g: TGarbos;
@@ -942,6 +977,83 @@ begin
   Result := lRes.ExitCode = 0;
   if not Result then
     aError := lRes.OutputText.Trim;
+end;
+
+function TGitClient.TryFixSubmoduleFastForwardToMain(const aRepoRoot: string; const aMainRef: string;
+  out aError: string): Boolean;
+var
+  lRes: TGitResult;
+  lErr: string;
+  lBranchName: string;
+  lSlashPos: Integer;
+begin
+  aError := '';
+  if aMainRef.Trim = '' then
+  begin
+    aError := 'target ref is required';
+    Exit(False);
+  end;
+
+  lSlashPos := aMainRef.IndexOf('/');
+  if lSlashPos < 0 then
+  begin
+    aError := 'target ref must be in remote/branch format';
+    Exit(False);
+  end;
+
+  lBranchName := aMainRef.Substring(lSlashPos + 1).Trim;
+  if lBranchName = '' then
+  begin
+    aError := 'target branch is required';
+    Exit(False);
+  end;
+
+  if not TryRunGit(aRepoRoot, ['fetch', '--prune', 'origin'], lRes, lErr, cDefaultNetworkTimeoutMs) then
+  begin
+    aError := lErr;
+    Exit(False);
+  end;
+  if lRes.ExitCode <> 0 then
+  begin
+    aError := lRes.OutputText.Trim;
+    Exit(False);
+  end;
+
+  if not TryRunGit(aRepoRoot, ['reset', '--hard', aMainRef], lRes, lErr, 0) then
+  begin
+    aError := lErr;
+    Exit(False);
+  end;
+  if lRes.ExitCode <> 0 then
+  begin
+    aError := lRes.OutputText.Trim;
+    Exit(False);
+  end;
+
+  if not TryRunGit(aRepoRoot, ['checkout', '-B', lBranchName, aMainRef], lRes, lErr, 0) then
+  begin
+    aError := lErr;
+    Exit(False);
+  end;
+  Result := lRes.ExitCode = 0;
+  if not Result then
+    aError := lRes.OutputText.Trim;
+end;
+
+class function TGitClient.IsPullConflictError(const aError: string): Boolean;
+var
+  lText: string;
+begin
+  lText := aError.ToLowerInvariant;
+  Result := lText.Contains('conflict') or
+    lText.Contains('automatic merge failed') or
+    lText.Contains('merge conflict') or
+    lText.Contains('not possible to fast-forward') or
+    lText.Contains('cannot fast-forward') or
+    lText.Contains('please commit your changes or stash them before you merge') or
+    lText.Contains('would be overwritten by merge') or
+    lText.Contains('rebase in progress') or
+    lText.Contains('could not apply');
 end;
 
 class function TGitClient.ParseStatusPorcelain(const aLines: TArray<string>): TGitStatusParse;

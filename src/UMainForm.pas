@@ -13,7 +13,7 @@ uses
 
 type
   {$SCOPEDENUMS ON}
-  TRepoAction = (raPull, raCommit, raPush, raFetch, raOpenFolder);
+  TRepoAction = (raPull, raCommit, raPush, raFetch, raFixSubmoduleMain, raOpenFolder);
   TRepoFilter = (rfAttention, rfAll, rfDirty, rfBehind, rfDetached, rfClean);
 
   TfrmMain = class(TForm)
@@ -64,6 +64,7 @@ type
     pmRepoActions: TPopupMenu;
     miRepoCommit: TMenuItem;
     miRepoFetch: TMenuItem;
+    miRepoFixSubmoduleMain: TMenuItem;
     miRepoOpenFolder: TMenuItem;
     pbProgress: TProgressBar;
     procedure FormCreate(Sender: TObject);
@@ -182,6 +183,7 @@ const
   rsCommit = 'Commit';
   rsPush = 'Push';
   rsFetch = 'Fetch';
+  rsFixSubmoduleMain = 'Fix submodule to remote main';
   rsOpenFolder = 'Open folder';
   rsCommitPrompt = 'Commit message:';
   rsCommitTitle = 'Commit';
@@ -203,8 +205,13 @@ const
   rsBadgeAhead = 'Ahead: ';
   rsBadgeSyncOk = 'Clean';
   rsBadgeDirty = 'Dirty';
+  rsBadgeSubmoduleNoFastForward = 'Submodule no-ff to ';
   rsStatusReady = 'Ready';
   rsStatusScanning = 'Scanning...';
+  rsFixSubmoduleMissingRef = 'Cannot fix submodule because origin/main and origin/master are missing.';
+  rsFixSubmoduleConfirm = 'This will run "git fetch --prune origin", "git reset --hard %s", and "git checkout -B %s %s".'#13#10 +
+    'This discards local commits/changes in that repo. Continue?';
+  rsPullConflictAlert = 'Pull failed due to conflicts/non-fast-forward in:' + #13#10 + '%s' + #13#10#13#10 + '%s';
 
 const
   cLogScanStarted = 'Scan started.';
@@ -246,6 +253,10 @@ begin
   btnShowLog.Caption := rsShowLog;
   btnPullVisible.Caption := rsPullAll;
   btnPushVisible.Caption := rsPushAll;
+  miRepoCommit.Caption := rsCommit;
+  miRepoFetch.Caption := rsFetch;
+  miRepoFixSubmoduleMain.Caption := rsFixSubmoduleMain;
+  miRepoOpenFolder.Caption := rsOpenFolder;
 
   cboStatusFilter.Items.BeginUpdate;
   try
@@ -1081,6 +1092,9 @@ begin
   else
     AddBadge(rsBadgeSyncOk, True);
 
+  if aStatus.SubmoduleNeedsMainFastForward then
+    AddBadge(rsBadgeSubmoduleNoFastForward + aStatus.SubmoduleMainRemoteRef, False);
+
   if aStatus.IsDirty then
   begin
     lDirtyBadge := BuildDirtyBadge(aStatus.DirtySummary, lHasDirtyFiles);
@@ -1246,6 +1260,8 @@ begin
         UpdateStatusText(aEvent.Text);
         if aEvent.RepoStatus.RepoRoot <> '' then
           UpdateRepoPanel(aEvent.RepoStatus);
+        if aEvent.AlertText <> '' then
+          MessageDlg(aEvent.AlertText, mtWarning, [mbOK], 0);
       end;
     TUiEventKind.uekClearResults:
       ClearRepoPanels;
@@ -1343,9 +1359,13 @@ begin
     Exit;
   fPopupRepoRoot := lRepo;
   if fRepoStatusMap.TryGetValue(lRepo, lStatus) then
-    miRepoCommit.Visible := lStatus.IsDirty
-  else
+  begin
+    miRepoCommit.Visible := lStatus.IsDirty;
+    miRepoFixSubmoduleMain.Visible := lStatus.SubmoduleNeedsMainFastForward;
+  end else begin
     miRepoCommit.Visible := False;
+    miRepoFixSubmoduleMain.Visible := False;
+  end;
   lPt := lBtn.ClientToScreen(Point(0, lBtn.Height));
   pmRepoActions.Popup(lPt.X, lPt.Y);
 end;
@@ -1360,6 +1380,8 @@ begin
     lAction := TRepoAction.raCommit
   else if Sender = miRepoFetch then
     lAction := TRepoAction.raFetch
+  else if Sender = miRepoFixSubmoduleMain then
+    lAction := TRepoAction.raFixSubmoduleMain
   else if Sender = miRepoOpenFolder then
     lAction := TRepoAction.raOpenFolder
   else
@@ -1370,6 +1392,9 @@ end;
 procedure TfrmMain.ExecuteRepoAction(const aAction: TRepoAction; const aRepoRoot: string);
 var
   lMsg: string;
+  lStatus: TRepoStatus;
+  lBranchName: string;
+  lSlashPos: Integer;
 begin
   if aAction = TRepoAction.raCommit then
   begin
@@ -1383,6 +1408,27 @@ begin
   if aAction = TRepoAction.raOpenFolder then
   begin
     ShellExecute(Handle, 'open', PChar(aRepoRoot), nil, nil, SW_SHOWNORMAL);
+    Exit;
+  end;
+
+  if aAction = TRepoAction.raFixSubmoduleMain then
+  begin
+    if not fRepoStatusMap.TryGetValue(aRepoRoot, lStatus) then
+      Exit;
+    if lStatus.SubmoduleMainRemoteRef = '' then
+    begin
+      MessageDlg(rsFixSubmoduleMissingRef, mtWarning, [mbOK], 0);
+      Exit;
+    end;
+    lSlashPos := lStatus.SubmoduleMainRemoteRef.IndexOf('/');
+    if lSlashPos < 0 then
+      lBranchName := lStatus.SubmoduleMainRemoteRef
+    else
+      lBranchName := lStatus.SubmoduleMainRemoteRef.Substring(lSlashPos + 1);
+    if MessageDlg(Format(rsFixSubmoduleConfirm, [lStatus.SubmoduleMainRemoteRef, lBranchName,
+      lStatus.SubmoduleMainRemoteRef]), mtWarning, [mbYes, mbNo], 0) <> mrYes then
+      Exit;
+    RunRepoAction(aAction, aRepoRoot, lStatus.SubmoduleMainRemoteRef);
     Exit;
   end;
 
@@ -1410,6 +1456,7 @@ begin
     TRepoAction.raCommit: lActionName := rsCommit;
     TRepoAction.raPush: lActionName := rsPush;
     TRepoAction.raFetch: lActionName := rsFetch;
+    TRepoAction.raFixSubmoduleMain: lActionName := rsFixSubmoduleMain;
   else
     lActionName := rsOpenFolder;
   end;
@@ -1447,6 +1494,7 @@ begin
             TRepoAction.raCommit: lOk := fGit.TryCommit(aRepoRoot, aMessage, lErr);
             TRepoAction.raPush: lOk := fGit.TryPush(aRepoRoot, lErr);
             TRepoAction.raFetch: lOk := fGit.TryFetchRemote(aRepoRoot, lFetchRemote, 60000, lErr);
+            TRepoAction.raFixSubmoduleMain: lOk := fGit.TryFixSubmoduleFastForwardToMain(aRepoRoot, aMessage, lErr);
           end;
 
           if lOk then
@@ -1456,6 +1504,8 @@ begin
         except
           on E: Exception do
           begin
+            lErr := E.Message;
+            lOk := False;
             lMsg := Format('%s %s: %s - %s', [cLogAction, lActionName, cLogActionFailed, E.Message]);
           end;
         end;
@@ -1484,6 +1534,11 @@ begin
         lEvent := Default(TUiEvent);
         lEvent.Kind := TUiEventKind.uekActionResult;
         lEvent.Text := lMsg;
+        lEvent.ActionTag := Ord(aAction);
+        lEvent.ActionSucceeded := lOk;
+        lEvent.ActionError := lErr;
+        if (not lOk) and (aAction = TRepoAction.raPull) and TGitClient.IsPullConflictError(lErr) then
+          lEvent.AlertText := Format(rsPullConflictAlert, [aRepoRoot, lErr]);
         if lStatusOk then
           lEvent.RepoStatus := lStatus;
         fQueue.Enqueue(lEvent);

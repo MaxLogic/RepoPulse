@@ -19,6 +19,10 @@ type
     ProgressMax: Integer;
     ProgressValue: Integer;
     RepoStatus: TRepoStatus;
+    ActionTag: Integer;
+    ActionSucceeded: Boolean;
+    ActionError: string;
+    AlertText: string;
   end;
 
   TUiEventQueue = class

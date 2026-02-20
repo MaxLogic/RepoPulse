@@ -36,6 +36,9 @@ type
     RepoRoot: string;
     MatchedFolders: TArray<string>;
     Branch: string;
+    IsSubmodule: Boolean;
+    SubmoduleMainRemoteRef: string;
+    SubmoduleNeedsMainFastForward: Boolean;
     HasOrigin: Boolean;
     Upstream: string;
     CanCompare: Boolean;

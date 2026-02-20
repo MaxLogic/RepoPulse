@@ -13,6 +13,10 @@ type
     procedure ParseStatusPorcelain_StagedAndUnstaged;
     [Test]
     procedure ParseAheadBehind_Basic;
+    [Test]
+    procedure IsPullConflictError_DetectsFastForwardAbort;
+    [Test]
+    procedure IsPullConflictError_IgnoresNetworkFailures;
   end;
 
 implementation
@@ -48,6 +52,18 @@ begin
   Assert.IsTrue(lOk);
   Assert.AreEqual(10, lAhead);
   Assert.AreEqual(2, lBehind);
+end;
+
+procedure TGitParsingTests.IsPullConflictError_DetectsFastForwardAbort;
+begin
+  Assert.IsTrue(TGitClient.IsPullConflictError('fatal: Not possible to fast-forward, aborting.'));
+  Assert.IsTrue(TGitClient.IsPullConflictError('CONFLICT (content): Merge conflict in src/main.pas'));
+end;
+
+procedure TGitParsingTests.IsPullConflictError_IgnoresNetworkFailures;
+begin
+  Assert.IsFalse(TGitClient.IsPullConflictError('fatal: unable to access https://example.com/: Could not resolve host: example.com'));
+  Assert.IsFalse(TGitClient.IsPullConflictError('fatal: Authentication failed for https://example.com/'));
 end;
 
 initialization
