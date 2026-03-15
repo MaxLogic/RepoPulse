@@ -14,6 +14,7 @@ All notable user-visible changes to this project will be documented in this file
 - Pull failures caused by conflicts or non-fast-forward states now trigger a warning dialog in addition to the action log entry.
 
 ### Fixed
+- Repo cards now show only the path relative to the configured scan directory instead of repeating the scan-root segment. (T-009)
 - Prevented Phase 3 scans from hanging on non-interactive git prompts. (T-003)
 - Normalized paths and handled directory attributes safely during git write-access checks. (T-005)
 - Released temp-file handles before deleting them during git write-access checks. (T-006)

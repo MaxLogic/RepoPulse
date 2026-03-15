@@ -8,8 +8,8 @@ uses
   Winapi.ShellAPI, Winapi.Windows,
   Vcl.Clipbrd, Vcl.ComCtrls, Vcl.Controls, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Forms, Vcl.Graphics,
   Vcl.Menus, Vcl.StdCtrls,
-  AutoFree, AutoHourGlass, CancelToken, MaxLogic.ApplicationMessageManager, MaxLogic.Logger, maxLogic.ioutils,
-  UAppSettings, UGitClient, UModels, URepoScanner, UUiEventQueue;
+  AutoFree, AutoHourGlass, CancelToken, MaxLogic.ApplicationMessageManager, MaxLogic.Logger,
+  UAppSettings, UGitClient, UModels, URepoPathDisplay, URepoScanner, UUiEventQueue;
 
 type
   {$SCOPEDENUMS ON}
@@ -508,24 +508,8 @@ begin
 end;
 
 function TfrmMain.GetRelativeRepoPath(const aRepoRoot: string): string;
-var
-  lBase: string;
-  lRelative: string;
 begin
-  lBase := Trim(fSettings.StartPath);
-  if lBase <> '' then
-  begin
-    lBase := IncludeTrailingPathDelimiter(lBase);
-    lRelative := ExtractRelativePath(lBase, aRepoRoot);
-    if (lRelative <> '') and (Copy(lRelative, 1, 2) <> '..') then
-    begin
-      Result := ExcludeTrailingPathDelimiter(lRelative);
-      Exit;
-    end;
-  end;
-  Result := ExtractFileName(aRepoRoot);
-  if Result = '' then
-    Result := aRepoRoot;
+  Result := BuildRelativeRepoPath(aRepoRoot, fSettings.StartPath);
 end;
 
 function TfrmMain.BuildDirtyBadge(const aDirtySummary: string; out aHasFiles: Boolean): string;

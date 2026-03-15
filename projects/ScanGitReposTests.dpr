@@ -8,7 +8,8 @@ uses
   DUnitX.Loggers.Console, DUnitX.Loggers.XML.NUnit, DUnitX.TestFramework,
   TestGitParsing in '..\tests\TestGitParsing.pas',
   TestIgnoreRules in '..\tests\TestIgnoreRules.pas',
-  TestPathUtils in '..\tests\TestPathUtils.pas';
+  TestPathUtils in '..\tests\TestPathUtils.pas',
+  TestRepoPathDisplay in '..\tests\TestRepoPathDisplay.pas';
 
 var
   lRunner: ITestRunner;
