@@ -154,7 +154,7 @@ uses
 {$R *.dfm}
 
 resourcestring
-  rsFormCaption = 'Scan Git Repos';
+  rsFormCaption = 'RepoPulse - Scan Git Repos';
   rsSettingsHeader = 'Settings';
   rsStartPath = 'Scan Directory';
   rsStatusFilter = 'Status Filter';

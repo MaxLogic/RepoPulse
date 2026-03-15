@@ -1,7 +1,7 @@
 object frmMain: TfrmMain
   Left = 0
   Top = 0
-  Caption = 'Scan Git Repos'
+  Caption = 'RepoPulse - Scan Git Repos'
   ClientHeight = 720
   ClientWidth = 1338
   Color = clWindow
