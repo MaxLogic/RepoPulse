@@ -3,7 +3,7 @@
         <ProjectGuid>{6FD9E56C-A6E7-4F82-8119-92C967B491B1}</ProjectGuid>
         <MainSource>ScanGitRepos.dpr</MainSource>
         <Base>True</Base>
-        <Config Condition="'$(Config)'==''">Debug</Config>
+        <Config Condition="'$(Config)'==''">Release</Config>
         <ProjectName Condition="'$(ProjectName)'==''">ScanGitRepos</ProjectName>
         <TargetedPlatforms>1</TargetedPlatforms>
         <AppType>Application</AppType>
