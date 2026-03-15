@@ -144,6 +144,13 @@ var
 
 implementation
 
+
+uses
+  {$IFDEF madExcept}
+  MaxMadExcept,
+  {$ENDIF}
+  MaxLogic.ioUtils;
+
 {$R *.dfm}
 
 resourcestring
@@ -223,6 +230,9 @@ const
 
 procedure TfrmMain.FormCreate(Sender: TObject);
 begin
+  {$IFDEF madExcept}
+  MaxMadExcept.AdjustMadExcept(GetInstallDir);
+  {$ENDIF}
   fSettings := TAppSettings.Create;
   fSettings.Load;
 
