@@ -13,6 +13,8 @@ type
     procedure BuildRelativeRepoPath_StripsScanRootPrefix;
     [Test]
     procedure BuildRelativeRepoPath_FallsBackToRepoNameOutsideScanRoot;
+    [Test]
+    procedure BuildRelativeRepoPath_UsesMostSpecificConfiguredRoot;
   end;
 
 implementation
@@ -27,6 +29,12 @@ procedure TRepoPathDisplayTests.BuildRelativeRepoPath_FallsBackToRepoNameOutside
 begin
   Assert.AreEqual('SkillSearch',
     BuildRelativeRepoPath('F:\other\SkillSearch', 'F:\projects\'));
+end;
+
+procedure TRepoPathDisplayTests.BuildRelativeRepoPath_UsesMostSpecificConfiguredRoot;
+begin
+  Assert.AreEqual('RepoPulse', BuildRelativeRepoPath('F:\projects\MaxLogic\RepoPulse',
+    ['F:\projects', 'F:\projects\MaxLogic']));
 end;
 
 initialization

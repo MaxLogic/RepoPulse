@@ -1,36 +1,41 @@
 # ScanGitRepos
 
 ## What it does
-ScanGitRepos scans a folder tree to find Git repositories and summarizes their status in one place. It helps keep many repos in sync without opening each one.
+ScanGitRepos scans configured folder trees to find Git repositories and summarizes their status in one place. It helps keep many repos in sync without opening each one.
 
 It shows whether each repo is clean or dirty and whether it is ahead or behind its upstream. Actions are run per repo when selected.
 
 ## Main features
-- Scan a folder tree for Git repositories.
+- Scan multiple folder trees for Git repositories while pruning `.ignoredirectory` rules.
+- Filter discovered repository names or relative paths with `*` and `?` patterns.
 - Identify clean/dirty and ahead/behind status.
-- Per-repo actions: pull, commit, push, fetch, open folder.
+- Per-repo actions: pull, commit, push, fetch, rescan, and open folder. When TortoiseGit is installed, its Commit and Sync dialogs are also available.
 - Bulk actions for all visible repos (Pull / Push).
 - Settings are remembered between runs.
 - Lightweight toolbar with inline scan + filter inputs.
 - Status badges for branch/behind/ahead/dirty.
 - Status filter shows counts for: Needs attention, All, Dirty, Behind, Detached, Clean.
+- Repository rows appear during discovery; local status appears before any stale remote fetch completes.
+- A validated repository inventory warm-starts repeat scans, while the refresh interval limits repeated fetches.
 
 ## Requirements
 - Windows.
 - Git installed and available on PATH.
+- `sk4d.dll` beside `ScanGitRepos.exe`; Delphi deployment metadata copies the Win32 Skia runtime when deploying from the IDE.
 
 ## How to run
 After a build, the executable is expected at `bin/ScanGitRepos.exe`. Start it by double-clicking the file or by running it from a command prompt.
 
 ## First-time setup
 1. Start the app.
-2. Choose a Scan Directory (the root folder to scan).
-3. Enter a Search Filter if needed.
+2. Edit Scan Paths and enter one root folder per line.
+3. Enter a Search Filter if needed. The default `*` includes every discovered repository.
 4. Start the scan.
 
 ## UI overview
-- Top toolbar: Scan Directory, Search Filter, Settings, Scan/Cancel.
-- Results: repo cards with a bold relative path, then status badges.
+- Top toolbar: Scan Paths, Search Filter, Scan/Cancel, Pull all, Push all, Settings.
+- An animated scan indicator remains visible while repository discovery and status work continue.
+- Results: a virtual two-line list with a bold relative path, then status badges and extra row spacing.
 - Actions: Pull appears only when behind; Push/Commit appear only when dirty.
 - Status filter shows counts and can show detached HEAD repos.
 - Status bar shows the current phase or summary. Double-click to copy it.
@@ -56,8 +61,8 @@ The UI uses screen-reader-friendly controls. Each field has a screen reader frie
 - Close and reopen the app after updating PATH.
 
 ### no repos found
-- Confirm the StartPath points to a folder that contains Git repos.
-- Check that the repo name filter is not too narrow.
+- Confirm at least one configured scan path contains Git repos.
+- Check that the wildcard filter is not too narrow.
 
 ### repo has no upstream configured
 - Set an upstream on the current branch, for example:

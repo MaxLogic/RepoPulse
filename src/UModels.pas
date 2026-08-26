@@ -37,6 +37,7 @@ type
     MatchedFolders: TArray<string>;
     Branch: string;
     IsSubmodule: Boolean;
+    SuperprojectRoot: string;
     SubmoduleMainRemoteRef: string;
     SubmoduleNeedsMainFastForward: Boolean;
     HasOrigin: Boolean;

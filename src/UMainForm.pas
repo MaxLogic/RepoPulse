@@ -3,17 +3,19 @@ unit UMainForm;
 interface
 
 uses
-  System.Classes, System.Generics.Collections, System.IOUtils, System.StrUtils, System.SyncObjs,
-  System.SysUtils, System.Types,
+  System.Classes, System.Diagnostics, System.Generics.Collections, System.ImageList, System.IOUtils,
+  System.Skia, System.StrUtils, System.SyncObjs, System.SysUtils, System.Types,
   Winapi.ShellAPI, Winapi.Windows,
-  Vcl.Clipbrd, Vcl.ComCtrls, Vcl.Controls, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Forms, Vcl.Graphics,
-  Vcl.Menus, Vcl.StdCtrls,
+  Vcl.BaseImageCollection, Vcl.Clipbrd, Vcl.ComCtrls, Vcl.Controls, Vcl.Dialogs, Vcl.ExtCtrls,
+  Vcl.Forms, Vcl.Graphics, Vcl.ImgList, Vcl.Menus, Vcl.Skia, Vcl.StdCtrls, Vcl.VirtualImageList,
+  AdvTypes, VirtualTrees, VirtualTrees.Accessibility,
   AutoFree, AutoHourGlass, CancelToken, MaxLogic.ApplicationMessageManager, MaxLogic.Logger,
-  UAppSettings, UGitClient, UModels, URepoPathDisplay, URepoScanner, UUiEventQueue;
+  UAppSettings, UEscapeDialog, UGitClient, UModels, URepoListModel, URepoPathDisplay, URepoScanner,
+  UScanPaths, UScanPathsDialog, UTortoiseGit, UUiEventQueue;
 
 type
   {$SCOPEDENUMS ON}
-  TRepoAction = (raPull, raCommit, raPush, raFetch, raFixSubmoduleMain, raOpenFolder);
+  TRepoAction = (raPull, raCommit, raPush, raFetch, raFixSubmoduleMain, raRescan, raOpenFolder);
   TRepoFilter = (rfAttention, rfAll, rfDirty, rfBehind, rfDetached, rfClean);
 
   TfrmMain = class(TForm)
@@ -30,8 +32,7 @@ type
     cboStatusFilter: TComboBox;
     lblStatusFilter: TStaticText;
     pnlToolbarActions: TPanel;
-    sbRepos: TScrollBox;
-    fpRepos: TFlowPanel;
+    RepoTree: TVirtualStringTree;
     tmrUi: TTimer;
     btnScan: TButton;
     btnSettings: TButton;
@@ -65,8 +66,18 @@ type
     miRepoCommit: TMenuItem;
     miRepoFetch: TMenuItem;
     miRepoFixSubmoduleMain: TMenuItem;
+    miRepoSeparator: TMenuItem;
+    miRepoTortoiseCommit: TMenuItem;
+    miRepoTortoiseSync: TMenuItem;
+    miRepoRescan: TMenuItem;
+    miRepoOpenSeparator: TMenuItem;
     miRepoOpenFolder: TMenuItem;
     pbProgress: TProgressBar;
+    ActivityPanel: TPanel;
+    ScanAnimation: TSkAnimatedImage;
+    lblScanActivity: TStaticText;
+    ButtonImages: TVirtualImageList;
+    ButtonSvgCollection: TAdvSVGImageCollection;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure btnBrowseStartClick(Sender: TObject);
@@ -79,8 +90,18 @@ type
     procedure btnShowLogClick(Sender: TObject);
     procedure cboStatusFilterChange(Sender: TObject);
     procedure pnlStatusDblClick(Sender: TObject);
-    procedure sbReposResize(Sender: TObject);
     procedure RepoMenuClick(Sender: TObject);
+    procedure RepoActionsPopup(aSender: TObject);
+    procedure RepoTreeAfterCellPaint(aSender: TBaseVirtualTree; aTargetCanvas: TCanvas;
+      aNode: PVirtualNode; aColumn: TColumnIndex; aCellRect: TRect);
+    procedure RepoTreeGetText(aSender: TBaseVirtualTree; aNode: PVirtualNode;
+      aColumn: TColumnIndex; aTextType: TVSTTextType; var aCellText: string);
+    procedure RepoTreeMouseDown(aSender: TObject; aButton: TMouseButton; aShift: TShiftState;
+      X, Y: Integer);
+    procedure RepoTreeMouseUp(aSender: TObject; aButton: TMouseButton; aShift: TShiftState;
+      X, Y: Integer);
+    procedure RepoTreePaintText(aSender: TBaseVirtualTree; const aTargetCanvas: TCanvas;
+      aNode: PVirtualNode; aColumn: TColumnIndex; aTextType: TVSTTextType);
     procedure tmrUiTimer(Sender: TObject);
   private
     fSettings: TAppSettings;
@@ -89,38 +110,50 @@ type
     fQueue: TUiEventQueue;
     fScanThread: TThread;
     fCancelToken: iCancelToken;
-    fButtonRepoMap: TDictionary<TObject, string>;
     fActionThreads: TList<TThread>;
     fActionLock: TCriticalSection;
     fActionBusyCount: Integer;
     fActionHourglass: IInterface;
     fShuttingDown: Boolean;
     fPopupRepoRoot: string;
+    fTortoiseGitExe: string;
     fRepoStatusMap: TDictionary<string, TRepoStatus>;
+    fRepoListModel: TRepoListModel;
     fStatusFilter: TRepoFilter;
+    fScanGeneration: Int64;
+    fMaxUiBatchMilliseconds: Int64;
+    fUiMetricsPending: Boolean;
+    fRepoViewDirty: Boolean;
+    fRepoViewSelectionRoot: string;
+    fLastRepoViewFlushTick: UInt64;
     fRedirectMouseWheel: TAppMessagehandlerRedirectMouseWheel;
     procedure LoadSettingsToUi;
+    procedure UpdateScanPathsDisplay;
     function ReadSettingsFromUi(out aError: string): Boolean;
     function EditIgnoreDirsFile(const aPath: string): Boolean;
     function ResolveIgnoreDirsPath: string;
-    function EllipsizeMiddle(const aText: string; const aMax: Integer): string;
-    function EllipsizeMiddleToWidth(const aText: string; const aMaxWidth: Integer; const aCanvas: TCanvas): string;
     function GetRelativeRepoPath(const aRepoRoot: string): string;
     function BuildDirtyBadge(const aDirtySummary: string; out aHasFiles: Boolean): string;
-    function RepoMatchesFilter(const aStatus: TRepoStatus): Boolean;
     procedure UpdateStatusFilterItems;
     procedure StartScan;
     procedure SetScanningState(const aScanning: Boolean);
     procedure BeginActionBusy;
     procedure EndActionBusy(const aCount: Integer = 1);
     procedure ClearRepoPanels;
+    procedure AddWaitingRepo(const aRepoRoot: string);
     procedure AddRepoPanel(const aStatus: TRepoStatus);
-    procedure BuildRepoCard(const aStatus: TRepoStatus; const aCard: TPanel);
     procedure UpdateRepoPanel(const aStatus: TRepoStatus);
-    function TryFindRepoCard(const aRepoRoot: string; out aCard: TPanel; out aIndex: Integer): Boolean;
-    function FindRepoPathLabel(const aCard: TPanel): TStaticText;
-    procedure UpdateRepoPathLabel(const aCard: TPanel);
-    procedure RemoveButtonsFromMap(const aParent: TWinControl);
+    function RepoItemForNode(const aNode: PVirtualNode; out aItem: TRepoListItem): Boolean;
+    function SelectedRepoRoot: string;
+    procedure SelectRepoRoot(const aRepoRoot: string);
+    procedure RefreshRepoTree(const aSelectionRoot: string = '');
+    procedure QueueRepoViewRefresh;
+    procedure FlushRepoView;
+    function BuildRepoAccessibilityText(const aItem: TRepoListItem): string;
+    procedure GetRepoActionRects(const aItem: TRepoListItem; const aCellRect: TRect;
+      out aPullRect, aPushRect, aMoreRect: TRect);
+    procedure PrepareRepoPopup(const aRepoRoot: string);
+    procedure ShowRepoPopup(const aRepoRoot: string; const aPoint: TPoint);
     procedure HandleUiEvent(const aEvent: TUiEvent);
     procedure QueueLog(const aText: string);
     procedure ApplyStatusFilter;
@@ -131,10 +164,7 @@ type
     procedure CleanupFinishedActionThreads;
     procedure WaitForActionThreads;
     procedure ScanThreadTerminated(Sender: TObject);
-    procedure RepoActionClick(Sender: TObject);
-    procedure RepoMoreClick(Sender: TObject);
     procedure ExecuteRepoAction(const aAction: TRepoAction; const aRepoRoot: string);
-    procedure UpdateRepoCardWidths;
     procedure UpdateStatusText(const aText: string);
     procedure RunRepoAction(const aAction: TRepoAction; const aRepoRoot: string; const aMessage: string);
   end;
@@ -156,7 +186,7 @@ uses
 resourcestring
   rsFormCaption = 'RepoPulse - Scan Git Repos';
   rsSettingsHeader = 'Settings';
-  rsStartPath = 'Scan Directory';
+  rsStartPath = 'Scan Paths';
   rsStatusFilter = 'Status Filter';
   rsMaxDepth = 'Max depth';
   rsIgnoreDirsLabel = 'Ignore directory rules';
@@ -177,11 +207,15 @@ resourcestring
   rsFilterCountFmt = '%s (%d)';
   rsPullAll = 'Pull all';
   rsPushAll = 'Push all';
+  rsRescanAction = 'Rescan';
+  rsRescanCaption = '&Rescan';
+  rsTortoiseGitCommit = 'TortoiseGit &Commit...';
+  rsTortoiseGitSync = 'TortoiseGit &Sync...';
 
 const
-  cRepoPathLabelTag = 901;
   rsTargetName = 'Search Filter';
   rsScan = 'Scan';
+  rsScanActivity = 'Scanning repositories...';
   rsCancel = 'Cancel';
   rsSettings = 'Settings';
   rsShowLog = 'Show log';
@@ -190,14 +224,13 @@ const
   rsCommit = 'Commit';
   rsPush = 'Push';
   rsFetch = 'Fetch';
-  rsFixSubmoduleMain = 'Fix submodule to remote main';
+  rsFixSubmoduleMain = 'Realign branch to remote main';
   rsOpenFolder = 'Open folder';
   rsCommitPrompt = 'Commit message:';
   rsCommitTitle = 'Commit';
   rsInvalidInput = 'Invalid input: ';
   rsOk = 'OK';
-  rsErrStartPathRequired = 'Scan directory is required';
-  rsErrStartPathMissing = 'Scan directory does not exist';
+  rsScanPathsConfiguredFmt = '%d scan paths configured';
   rsErrMaxDepthNumber = 'MaxDepth must be a number';
   rsErrMaxDepthRange = 'MaxDepth must be >= 0';
   rsErrThrottleNumber = 'ThrottleLimit must be a number';
@@ -212,10 +245,11 @@ const
   rsBadgeAhead = 'Ahead: ';
   rsBadgeSyncOk = 'Clean';
   rsBadgeDirty = 'Dirty';
-  rsBadgeSubmoduleNoFastForward = 'Submodule no-ff to ';
+  rsBadgeSubmoduleNoFastForward = 'No fast-forward to ';
   rsStatusReady = 'Ready';
   rsStatusScanning = 'Scanning...';
-  rsFixSubmoduleMissingRef = 'Cannot fix submodule because origin/main and origin/master are missing.';
+  rsStatusWaiting = 'Waiting for status...';
+  rsFixSubmoduleMissingRef = 'Cannot realign the branch because origin/main and origin/master are missing.';
   rsFixSubmoduleConfirm = 'This will run "git fetch --prune origin", "git reset --hard %s", and "git checkout -B %s %s".'#13#10 +
     'This discards local commits/changes in that repo. Continue?';
   rsPullConflictAlert = 'Pull failed due to conflicts/non-fast-forward in:' + #13#10 + '%s' + #13#10#13#10 + '%s';
@@ -226,7 +260,14 @@ const
   cLogAction = 'Action';
   cLogActionOk = 'OK';
   cLogActionFailed = 'FAILED';
+  cLogParentRefreshFailed = 'Parent refresh failed: %s';
   cIgnoreFileName = '.ignoredirectory';
+  cMaxUiEventsPerTick = 64;
+  cMaxUiMillisecondsPerTick = 8;
+  cBusyUiTimerInterval = 1;
+  cIdleUiTimerInterval = 100;
+  cRepoViewFlushInterval = 100;
+  cLogUiMetrics = 'UI event metrics: queue peak %d, max batch %d ms';
 
 procedure TfrmMain.FormCreate(Sender: TObject);
 begin
@@ -239,11 +280,12 @@ begin
   fGit := TGitClient.Create;
   fScanner := TRepoScanner.Create(fGit);
   fQueue := TUiEventQueue.Create;
-  fButtonRepoMap := TDictionary<TObject, string>.Create;
   fRepoStatusMap := TDictionary<string, TRepoStatus>.Create;
+  fRepoListModel := TRepoListModel.Create;
   fActionThreads := TList<TThread>.Create;
   fActionLock := TCriticalSection.Create;
   fShuttingDown := False;
+  fTortoiseGitExe := TTortoiseGit.DetectExecutable;
 
   Caption := rsFormCaption;
   lblSettingsHeader.Caption := rsSettingsHeader;
@@ -259,6 +301,7 @@ begin
   lblStatusFilter.Caption := rsStatusFilter;
 
   btnScan.Caption := rsScan;
+  lblScanActivity.Caption := rsScanActivity;
   btnSettings.Caption := rsSettings;
   btnShowLog.Caption := rsShowLog;
   btnPullVisible.Caption := rsPullAll;
@@ -266,7 +309,12 @@ begin
   miRepoCommit.Caption := rsCommit;
   miRepoFetch.Caption := rsFetch;
   miRepoFixSubmoduleMain.Caption := rsFixSubmoduleMain;
+  miRepoTortoiseCommit.Caption := rsTortoiseGitCommit;
+  miRepoTortoiseSync.Caption := rsTortoiseGitSync;
+  miRepoRescan.Caption := rsRescanCaption;
   miRepoOpenFolder.Caption := rsOpenFolder;
+  miRepoTortoiseCommit.Visible := fTortoiseGitExe <> '';
+  miRepoTortoiseSync.Visible := fTortoiseGitExe <> '';
 
   cboStatusFilter.Items.BeginUpdate;
   try
@@ -298,6 +346,8 @@ procedure TfrmMain.FormDestroy(Sender: TObject);
 begin
   fShuttingDown := True;
   tmrUi.Enabled := False;
+  ScanAnimation.Animation.Loop := False;
+  ScanAnimation.Animation.Enabled := False;
   FreeAndNil(fRedirectMouseWheel);
 
   if fScanThread <> nil then
@@ -310,7 +360,7 @@ begin
   end;
   fCancelToken := nil;
   WaitForActionThreads;
-  fButtonRepoMap.Free;
+  fRepoListModel.Free;
   fRepoStatusMap.Free;
   fQueue.Free;
   fScanner.Free;
@@ -324,7 +374,7 @@ procedure TfrmMain.LoadSettingsToUi;
 var
   i: Integer;
 begin
-  edtStartPath.Text := fSettings.StartPath;
+  UpdateScanPathsDisplay;
   edtMaxDepth.Text := IntToStr(fSettings.MaxDepth);
   edtThrottle.Text := IntToStr(fSettings.ThrottleLimit);
   edtCacheTtl.Text := IntToStr(fSettings.CacheTtlSeconds);
@@ -342,32 +392,47 @@ begin
   cboTargetName.Text := fSettings.TargetRepoName;
 end;
 
+procedure TfrmMain.UpdateScanPathsDisplay;
+var
+  g: TGarbos;
+  lPaths: TStringList;
+  lPath: string;
+begin
+  if Length(fSettings.ScanPaths) = 1 then
+    edtStartPath.Text := fSettings.ScanPaths[0]
+  else
+    edtStartPath.Text := Format(rsScanPathsConfiguredFmt, [Length(fSettings.ScanPaths)]);
+
+  GC(lPaths, TStringList.Create, g);
+  for lPath in fSettings.ScanPaths do
+    lPaths.Add(lPath);
+  edtStartPath.Hint := Trim(lPaths.Text);
+end;
+
 function TfrmMain.ReadSettingsFromUi(out aError: string): Boolean;
 var
   g: TGarbos;
-  lValue: string;
   lNum: Integer;
   i: Integer;
   lHistory: TList<string>;
   lFound: Boolean;
   lItem: string;
   lRepoNameHistory: TArray<string>;
+  lPathLines: TStringList;
+  lScanPaths: TArray<string>;
+  lScanPath: string;
 begin
   aError := '';
   Result := False;
 
-  lValue := Trim(edtStartPath.Text);
-  if lValue = '' then
-  begin
-    aError := rsErrStartPathRequired;
+  GC(lPathLines, TStringList.Create, g);
+  for lScanPath in fSettings.ScanPaths do
+    lPathLines.Add(lScanPath);
+  if not TryNormalizeScanPaths(lPathLines, lScanPaths, aError) then
     Exit(False);
-  end;
-  if not DirectoryExists(lValue) then
-  begin
-    aError := rsErrStartPathMissing;
-    Exit(False);
-  end;
-  fSettings.StartPath := lValue;
+  fSettings.ScanPaths := lScanPaths;
+  fSettings.StartPath := lScanPaths[0];
+  UpdateScanPathsDisplay;
 
   if not TryStrToInt(Trim(edtMaxDepth.Text), lNum) then
   begin
@@ -411,7 +476,7 @@ begin
   fSettings.TargetRepoName := Trim(cboTargetName.Text);
   if fSettings.TargetRepoName = '' then
   begin
-    fSettings.TargetRepoName := 'maxlogicfoundation';
+    fSettings.TargetRepoName := '*';
     cboTargetName.Text := fSettings.TargetRepoName;
   end;
 
@@ -469,57 +534,10 @@ begin
   Result := lSettingsPath;
 end;
 
-function TfrmMain.EllipsizeMiddle(const aText: string; const aMax: Integer): string;
-var
-  lKeep: Integer;
-  lLeft: Integer;
-  lRight: Integer;
-begin
-  Result := aText;
-  if (aMax <= 0) or (Length(aText) <= aMax) then
-    Exit;
-  if aMax <= 3 then
-  begin
-    Result := Copy(aText, 1, aMax);
-    Exit;
-  end;
-  lKeep := aMax - 3;
-  lLeft := lKeep div 2;
-  lRight := lKeep - lLeft;
-  Result := Copy(aText, 1, lLeft) + '...' + Copy(aText, Length(aText) - lRight + 1, lRight);
-end;
-
-function TfrmMain.EllipsizeMiddleToWidth(const aText: string; const aMaxWidth: Integer; const aCanvas: TCanvas): string;
-var
-  lLow: Integer;
-  lHigh: Integer;
-  lMid: Integer;
-  lCandidate: string;
-begin
-  Result := aText;
-  if (aCanvas = nil) or (aMaxWidth <= 0) then
-    Exit;
-  if aCanvas.TextWidth(aText) <= aMaxWidth then
-    Exit;
-  lLow := 1;
-  lHigh := Length(aText);
-  while lLow <= lHigh do
-  begin
-    lMid := (lLow + lHigh) div 2;
-    lCandidate := EllipsizeMiddle(aText, lMid);
-    if aCanvas.TextWidth(lCandidate) <= aMaxWidth then
-    begin
-      Result := lCandidate;
-      lLow := lMid + 1;
-    end else begin
-      lHigh := lMid - 1;
-    end;
-  end;
-end;
 
 function TfrmMain.GetRelativeRepoPath(const aRepoRoot: string): string;
 begin
-  Result := BuildRelativeRepoPath(aRepoRoot, fSettings.StartPath);
+  Result := BuildRelativeRepoPath(aRepoRoot, fSettings.ScanPaths);
 end;
 
 function TfrmMain.BuildDirtyBadge(const aDirtySummary: string; out aHasFiles: Boolean): string;
@@ -594,25 +612,6 @@ begin
     Result := Result + ' +' + IntToStr(lExtra);
 end;
 
-function TfrmMain.RepoMatchesFilter(const aStatus: TRepoStatus): Boolean;
-begin
-  case fStatusFilter of
-    TRepoFilter.rfAttention:
-      Result := aStatus.HasProblem;
-    TRepoFilter.rfAll:
-      Result := True;
-    TRepoFilter.rfDirty:
-      Result := aStatus.IsDirty;
-    TRepoFilter.rfBehind:
-      Result := aStatus.IsOutOfDate;
-    TRepoFilter.rfDetached:
-      Result := SameText(aStatus.Branch, rsBranchDetached);
-    TRepoFilter.rfClean:
-      Result := not aStatus.HasProblem;
-  else
-    Result := True;
-  end;
-end;
 
 procedure TfrmMain.UpdateStatusText(const aText: string);
 begin
@@ -621,25 +620,11 @@ end;
 
 procedure TfrmMain.ApplyStatusFilter;
 var
-  i: Integer;
-  lControl: TControl;
-  lCard: TPanel;
-  lStatus: TRepoStatus;
+  lSelectedRoot: string;
 begin
-  if fpRepos = nil then
-    Exit;
-  for i := 0 to fpRepos.ControlCount - 1 do
-  begin
-    lControl := fpRepos.Controls[i];
-    if not (lControl is TPanel) then
-      Continue;
-    lCard := TPanel(lControl);
-    if fRepoStatusMap.TryGetValue(lCard.Hint, lStatus) then
-      lCard.Visible := RepoMatchesFilter(lStatus)
-    else
-      lCard.Visible := True;
-  end;
-  UpdateRepoCardWidths;
+  lSelectedRoot := SelectedRepoRoot;
+  fRepoListModel.SetFilter(TRepoListFilter(Ord(fStatusFilter)));
+  RefreshRepoTree(lSelectedRoot);
   UpdateBulkActionButtons;
   UpdateStatusFilterItems;
 end;
@@ -652,29 +637,14 @@ var
   lBehind: Integer;
   lDetached: Integer;
   lClean: Integer;
-  lStatus: TRepoStatus;
   lIndex: Integer;
 begin
-  lAttention := 0;
-  lAll := 0;
-  lDirty := 0;
-  lBehind := 0;
-  lDetached := 0;
-  lClean := 0;
-  for lStatus in fRepoStatusMap.Values do
-  begin
-    Inc(lAll);
-    if lStatus.HasProblem then
-      Inc(lAttention)
-    else
-      Inc(lClean);
-    if lStatus.IsDirty then
-      Inc(lDirty);
-    if lStatus.IsOutOfDate then
-      Inc(lBehind);
-    if SameText(lStatus.Branch, rsBranchDetached) then
-      Inc(lDetached);
-  end;
+  lAttention := fRepoListModel.FilterCount(TRepoListFilter.rlfAttention);
+  lAll := fRepoListModel.FilterCount(TRepoListFilter.rlfAll);
+  lDirty := fRepoListModel.FilterCount(TRepoListFilter.rlfDirty);
+  lBehind := fRepoListModel.FilterCount(TRepoListFilter.rlfBehind);
+  lDetached := fRepoListModel.FilterCount(TRepoListFilter.rlfDetached);
+  lClean := fRepoListModel.FilterCount(TRepoListFilter.rlfClean);
 
   lIndex := cboStatusFilter.ItemIndex;
   cboStatusFilter.Items.BeginUpdate;
@@ -709,33 +679,23 @@ end;
 procedure TfrmMain.UpdateBulkActionButtons;
 var
   i: Integer;
-  lControl: TControl;
-  lCard: TPanel;
-  lStatus: TRepoStatus;
+  lItem: TRepoListItem;
   lHasPull: Boolean;
   lHasPush: Boolean;
 begin
   lHasPull := False;
   lHasPush := False;
-  if fpRepos <> nil then
+  for i := 0 to fRepoListModel.VisibleCount - 1 do
   begin
-    for i := 0 to fpRepos.ControlCount - 1 do
-    begin
-      lControl := fpRepos.Controls[i];
-      if not (lControl is TPanel) then
-        Continue;
-      lCard := TPanel(lControl);
-      if not lCard.Visible then
-        Continue;
-      if not fRepoStatusMap.TryGetValue(lCard.Hint, lStatus) then
-        Continue;
-      if lStatus.IsOutOfDate then
-        lHasPull := True;
-      if lStatus.IsDirty then
-        lHasPush := True;
-      if lHasPull and lHasPush then
-        Break;
-    end;
+    lItem := fRepoListModel.ItemAtVisible(i);
+    if lItem.State <> TRepoListItemState.rlisReady then
+      Continue;
+    if lItem.Status.IsOutOfDate then
+      lHasPull := True;
+    if lItem.Status.IsDirty then
+      lHasPush := True;
+    if lHasPull and lHasPush then
+      Break;
   end;
   btnPullVisible.Enabled := lHasPull and (fScanThread = nil);
   btnPushVisible.Enabled := lHasPush and (fScanThread = nil);
@@ -754,40 +714,31 @@ end;
 procedure TfrmMain.RunBulkAction(const aAction: TRepoAction);
 var
   i: Integer;
-  lControl: TControl;
-  lCard: TPanel;
-  lStatus: TRepoStatus;
+  lItem: TRepoListItem;
 begin
-  if fpRepos = nil then
-    Exit;
-  for i := 0 to fpRepos.ControlCount - 1 do
+  for i := 0 to fRepoListModel.VisibleCount - 1 do
   begin
-    lControl := fpRepos.Controls[i];
-    if not (lControl is TPanel) then
-      Continue;
-    lCard := TPanel(lControl);
-    if not lCard.Visible then
-      Continue;
-    if not fRepoStatusMap.TryGetValue(lCard.Hint, lStatus) then
+    lItem := fRepoListModel.ItemAtVisible(i);
+    if lItem.State <> TRepoListItemState.rlisReady then
       Continue;
     case aAction of
       TRepoAction.raPull:
-        if not lStatus.IsOutOfDate then
+        if not lItem.Status.IsOutOfDate then
           Continue;
       TRepoAction.raPush:
-        if not lStatus.IsDirty then
+        if not lItem.Status.IsDirty then
           Continue;
     else
       Continue;
     end;
-    ExecuteRepoAction(aAction, lStatus.RepoRoot);
+    ExecuteRepoAction(aAction, lItem.RepoRoot);
   end;
 end;
 
 function TfrmMain.EditIgnoreDirsFile(const aPath: string): Boolean;
 var
   g: TGarbos;
-  lForm: TForm;
+  lForm: TEscapeDialogForm;
   lMemo: TMemo;
   lPanel: TPanel;
   lOk: TButton;
@@ -797,7 +748,8 @@ var
 begin
   Result := False;
 
-  GC(lForm, TForm.CreateNew(nil), g);
+  GC(lForm, TEscapeDialogForm.CreateNew(nil), g);
+  lForm.KeyPreview := True;
   lForm.Caption := rsIgnoreDialogTitle;
   lForm.BorderStyle := bsDialog;
   lForm.Position := poOwnerFormCenter;
@@ -886,11 +838,18 @@ end;
 
 procedure TfrmMain.SetScanningState(const aScanning: Boolean);
 begin
+  ActivityPanel.Visible := aScanning;
+  ScanAnimation.Visible := aScanning;
   if aScanning then
   begin
+    ScanAnimation.Animation.Loop := True;
+    ScanAnimation.Animation.Enabled := True;
+    ScanAnimation.Animation.Start;
     btnScan.Caption := rsCancel;
     btnScan.OnClick := btnCancelClick;
   end else begin
+    ScanAnimation.Animation.Loop := False;
+    ScanAnimation.Animation.Enabled := False;
     btnScan.Caption := rsScan;
     btnScan.OnClick := btnScanClick;
   end;
@@ -925,287 +884,184 @@ begin
 end;
 
 procedure TfrmMain.ClearRepoPanels;
-var
-  i: Integer;
 begin
-  for i := fpRepos.ControlCount - 1 downto 0 do
-    fpRepos.Controls[i].Free;
-  fButtonRepoMap.Clear;
+  fRepoViewDirty := False;
+  fRepoViewSelectionRoot := '';
+  fLastRepoViewFlushTick := 0;
+  fRepoListModel.Clear;
   fRepoStatusMap.Clear;
+  RepoTree.Clear;
   UpdateBulkActionButtons;
   UpdateStatusFilterItems;
+end;
+
+procedure TfrmMain.AddWaitingRepo(const aRepoRoot: string);
+var
+  lCount: Integer;
+begin
+  lCount := fRepoListModel.Count;
+  fRepoListModel.AddWaiting(aRepoRoot, GetRelativeRepoPath(aRepoRoot));
+  if fRepoListModel.Count <> lCount then
+    QueueRepoViewRefresh;
 end;
 
 procedure TfrmMain.AddRepoPanel(const aStatus: TRepoStatus);
 begin
-  BuildRepoCard(aStatus, TPanel.Create(fpRepos));
+  fRepoStatusMap.AddOrSetValue(aStatus.RepoRoot, aStatus);
+  fRepoListModel.AddOrUpdate(aStatus, GetRelativeRepoPath(aStatus.RepoRoot));
+  QueueRepoViewRefresh;
 end;
 
-procedure TfrmMain.BuildRepoCard(const aStatus: TRepoStatus; const aCard: TPanel);
-var
-  lInfoPanel: TPanel;
-  lActionsPanel: TFlowPanel;
-  lBadges: TFlowPanel;
-  lName: TStaticText;
-  lBtn: TButton;
-  lRepoLabel: string;
-  lDirtyBadge: string;
-  lHasDirtyFiles: Boolean;
-  lBadge: TStaticText;
-  lActionCount: Integer;
-
-  procedure AddBadge(const aCaption: string; const aMuted: Boolean);
-  begin
-    lBadge := TStaticText.Create(lBadges);
-    lBadge.Parent := lBadges;
-    lBadge.AlignWithMargins := True;
-    lBadge.Margins.Right := 6;
-    lBadge.AutoSize := True;
-    lBadge.Caption := '[' + aCaption + ']';
-    lBadge.TabStop := False;
-    if aMuted then
-      lBadge.Font.Color := clGrayText;
-  end;
+procedure TfrmMain.UpdateRepoPanel(const aStatus: TRepoStatus);
 begin
-  if aCard = nil then
-    Exit;
-  if aCard.Parent <> fpRepos then
-    aCard.Parent := fpRepos;
-  aCard.AlignWithMargins := True;
-  aCard.Margins.SetBounds(0, 0, 0, 10);
-  aCard.Align := alTop;
-  aCard.Height := 84;
-  aCard.BevelOuter := bvNone;
-  aCard.Color := clWindow;
-  aCard.ParentBackground := False;
-  aCard.Padding.Left := 12;
-  aCard.Padding.Top := 8;
-  aCard.Padding.Right := 12;
-  aCard.Padding.Bottom := 8;
-  aCard.Hint := aStatus.RepoRoot;
-  aCard.ShowHint := False;
+  AddRepoPanel(aStatus);
+end;
 
-  lRepoLabel := GetRelativeRepoPath(aStatus.RepoRoot);
-  lActionsPanel := TFlowPanel.Create(aCard);
-  lActionsPanel.Parent := aCard;
-  lActionsPanel.Align := alRight;
-  lActionsPanel.Width := 210;
-  lActionsPanel.BevelOuter := bvNone;
-  lActionsPanel.Color := clWindow;
-  lActionsPanel.ParentBackground := False;
-  lActionsPanel.Padding.Top := 14;
-  lActionsPanel.AutoWrap := False;
-  lActionsPanel.FlowStyle := fsLeftRightTopBottom;
-
-  lActionCount := 0;
-  if aStatus.IsOutOfDate then
-  begin
-    lBtn := TButton.Create(lActionsPanel);
-    lBtn.Parent := lActionsPanel;
-    lBtn.Caption := rsPull;
-    lBtn.Width := 72;
-    lBtn.Height := 28;
-    lBtn.Tag := Ord(TRepoAction.raPull);
-    lBtn.Hint := 'Pull changes';
-    lBtn.ShowHint := True;
-    lBtn.OnClick := RepoActionClick;
-    fButtonRepoMap.Add(lBtn, aStatus.RepoRoot);
-    Inc(lActionCount);
-  end;
-
-  if aStatus.IsDirty then
-  begin
-    lBtn := TButton.Create(lActionsPanel);
-    lBtn.Parent := lActionsPanel;
-    lBtn.Caption := rsPush;
-    lBtn.Width := 72;
-    lBtn.Height := 28;
-    lBtn.Tag := Ord(TRepoAction.raPush);
-    lBtn.Hint := 'Push changes';
-    lBtn.ShowHint := True;
-    lBtn.OnClick := RepoActionClick;
-    fButtonRepoMap.Add(lBtn, aStatus.RepoRoot);
-    Inc(lActionCount);
-  end;
-
-  lBtn := TButton.Create(lActionsPanel);
-  lBtn.Parent := lActionsPanel;
-  lBtn.Caption := '...';
-  lBtn.Width := 32;
-  lBtn.Height := 28;
-  lBtn.Hint := 'More actions';
-  lBtn.ShowHint := True;
-  lBtn.OnClick := RepoMoreClick;
-  fButtonRepoMap.Add(lBtn, aStatus.RepoRoot);
-  Inc(lActionCount);
-
-  lActionsPanel.Width := (lActionCount * 80) + 10;
-
-  lInfoPanel := TPanel.Create(aCard);
-  lInfoPanel.Parent := aCard;
-  lInfoPanel.Align := alClient;
-  lInfoPanel.BevelOuter := bvNone;
-  lInfoPanel.Color := clWindow;
-  lInfoPanel.ParentBackground := False;
-
-  lName := TStaticText.Create(lInfoPanel);
-  lName.Parent := lInfoPanel;
-  lName.AlignWithMargins := True;
-  lName.Margins.Bottom := 2;
-  lName.Align := alTop;
-  lName.AutoSize := False;
-  lName.Height := 22;
-  lName.Caption := lRepoLabel;
-  lName.Tag := cRepoPathLabelTag;
-  lName.Font.Style := [fsBold];
-  lName.Font.Height := -16;
-  lName.ParentFont := False;
-
-  lBadges := TFlowPanel.Create(lInfoPanel);
-  lBadges.Parent := lInfoPanel;
-  lBadges.Top:= lName.Top + lName.Height; // ensure the Badges are show below the name of the repo
-  lBadges.Align := alTop;
-  lBadges.BevelOuter := bvNone;
-  lBadges.AutoSize := True;
-  lBadges.AutoWrap := False;
-  lBadges.FlowStyle := fsLeftRightTopBottom;
-  lBadges.Color := clWindow;
-  lBadges.ParentBackground := False;
-
-  AddBadge(rsBadgeBranch + aStatus.Branch, True);
-  if aStatus.FetchFailed then
-    AddBadge(rsBadgeFetchFailed, False)
-  else if not aStatus.HasOrigin then
-    AddBadge(rsBadgeNoOrigin, False)
-  else if aStatus.Upstream = '' then
-    AddBadge(rsBadgeNoUpstream, False)
-  else if aStatus.IsOutOfDate then
-    AddBadge(rsBadgeBehind + IntToStr(aStatus.Behind), False)
-  else if aStatus.HasUnpushed then
-    AddBadge(rsBadgeAhead + IntToStr(aStatus.Ahead), False)
+function TfrmMain.RepoItemForNode(const aNode: PVirtualNode; out aItem: TRepoListItem): Boolean;
+begin
+  Result := (aNode <> nil) and (aNode.Index < Cardinal(fRepoListModel.VisibleCount));
+  if Result then
+    aItem := fRepoListModel.ItemAtVisible(aNode.Index)
   else
-    AddBadge(rsBadgeSyncOk, True);
+    aItem := Default(TRepoListItem);
+end;
 
-  if aStatus.SubmoduleNeedsMainFastForward then
-    AddBadge(rsBadgeSubmoduleNoFastForward + aStatus.SubmoduleMainRemoteRef, False);
+function TfrmMain.SelectedRepoRoot: string;
+var
+  lItem: TRepoListItem;
+begin
+  Result := '';
+  if RepoItemForNode(RepoTree.FocusedNode, lItem) then
+    Result := lItem.RepoRoot;
+end;
 
-  if aStatus.IsDirty then
-  begin
-    lDirtyBadge := BuildDirtyBadge(aStatus.DirtySummary, lHasDirtyFiles);
-    AddBadge(lDirtyBadge, False);
+procedure TfrmMain.SelectRepoRoot(const aRepoRoot: string);
+var
+  lIndex: Integer;
+  lNode: PVirtualNode;
+begin
+  if aRepoRoot = '' then
+    Exit;
+  lIndex := fRepoListModel.FindVisibleIndex(aRepoRoot);
+  if lIndex < 0 then
+    Exit;
+  lNode := RepoTree.GetFirst;
+  while (lNode <> nil) and (Integer(lNode.Index) <> lIndex) do
+    lNode := RepoTree.GetNextSibling(lNode);
+  if lNode = nil then
+    Exit;
+  RepoTree.FocusedNode := lNode;
+  RepoTree.Selected[lNode] := True;
+  RepoTree.ScrollIntoView(lNode, False);
+end;
+
+procedure TfrmMain.RefreshRepoTree(const aSelectionRoot: string);
+begin
+  RepoTree.BeginUpdate;
+  try
+    RepoTree.RootNodeCount := fRepoListModel.VisibleCount;
+    RepoTree.Invalidate;
+  finally
+    RepoTree.EndUpdate;
   end;
+  SelectRepoRoot(aSelectionRoot);
+end;
 
-  fRepoStatusMap.AddOrSetValue(aStatus.RepoRoot, aStatus);
-  aCard.Visible := RepoMatchesFilter(aStatus);
-  UpdateRepoCardWidths;
+procedure TfrmMain.QueueRepoViewRefresh;
+begin
+  if not fRepoViewDirty then
+    fRepoViewSelectionRoot := SelectedRepoRoot;
+  fRepoViewDirty := True;
+end;
+
+procedure TfrmMain.FlushRepoView;
+begin
+  if not fRepoViewDirty then
+    Exit;
+  fRepoViewDirty := False;
+  RefreshRepoTree(fRepoViewSelectionRoot);
+  fRepoViewSelectionRoot := '';
+  fLastRepoViewFlushTick := GetTickCount64;
   UpdateBulkActionButtons;
   UpdateStatusFilterItems;
 end;
 
-procedure TfrmMain.UpdateRepoPanel(const aStatus: TRepoStatus);
+function TfrmMain.BuildRepoAccessibilityText(const aItem: TRepoListItem): string;
 var
-  lCard: TPanel;
-  lIndex: Integer;
+  lDirty: string;
+  lHasFiles: Boolean;
 begin
-  if TryFindRepoCard(aStatus.RepoRoot, lCard, lIndex) then
-  begin
-    RemoveButtonsFromMap(lCard);
-    while lCard.ControlCount > 0 do
-      lCard.Controls[0].Free;
-    BuildRepoCard(aStatus, lCard);
-  end else begin
-    AddRepoPanel(aStatus);
-  end;
-end;
-
-function TfrmMain.TryFindRepoCard(const aRepoRoot: string; out aCard: TPanel; out aIndex: Integer): Boolean;
-var
-  i: Integer;
-  lControl: TControl;
-begin
-  Result := False;
-  aCard := nil;
-  aIndex := -1;
-  if fpRepos = nil then
-    Exit;
-  for i := 0 to fpRepos.ControlCount - 1 do
-  begin
-    lControl := fpRepos.Controls[i];
-    if (lControl is TPanel) and (TPanel(lControl).Hint = aRepoRoot) then
-    begin
-      aCard := TPanel(lControl);
-      aIndex := i;
-      Exit(True);
-    end;
-  end;
-end;
-
-function TfrmMain.FindRepoPathLabel(const aCard: TPanel): TStaticText;
-  function FindInParent(const aParent: TWinControl): TStaticText;
-  var
-    i: Integer;
-    lChild: TControl;
-  begin
-    Result := nil;
-    for i := 0 to aParent.ControlCount - 1 do
-    begin
-      lChild := aParent.Controls[i];
-      if (lChild is TStaticText) and (lChild.Tag = cRepoPathLabelTag) then
-        Exit(TStaticText(lChild));
-      if lChild is TWinControl then
-      begin
-        Result := FindInParent(TWinControl(lChild));
-        if Result <> nil then
-          Exit;
-      end;
-    end;
-  end;
-begin
-  Result := nil;
-  if aCard = nil then
-    Exit;
-  Result := FindInParent(aCard);
-end;
-
-procedure TfrmMain.UpdateRepoPathLabel(const aCard: TPanel);
-var
-  lName: TStaticText;
-  lText: string;
-  lMaxWidth: Integer;
-  lCanvas: TControlCanvas;
-  g: TGarbos;
-begin
-  lName := FindRepoPathLabel(aCard);
-  if lName = nil then
-    Exit;
-  lText := GetRelativeRepoPath(aCard.Hint);
-  GC(lCanvas, TControlCanvas.Create, g);
-  lCanvas.Control := lName;
-  lCanvas.Font.Assign(lName.Font);
-  if lName.Parent <> nil then
-    lMaxWidth := TWinControl(lName.Parent).ClientWidth - 4
+  Result := aItem.DisplayPath;
+  if aItem.State = TRepoListItemState.rlisWaiting then
+    Exit(Result + '. ' + rsStatusWaiting);
+  Result := Result + '. ' + rsBadgeBranch + aItem.Status.Branch;
+  if aItem.Status.FetchFailed then
+    Result := Result + '. ' + rsBadgeFetchFailed
+  else if not aItem.Status.HasOrigin then
+    Result := Result + '. ' + rsBadgeNoOrigin
+  else if aItem.Status.Upstream = '' then
+    Result := Result + '. ' + rsBadgeNoUpstream
+  else if aItem.Status.IsOutOfDate then
+    Result := Result + '. ' + rsBadgeBehind + IntToStr(aItem.Status.Behind)
+  else if aItem.Status.HasUnpushed then
+    Result := Result + '. ' + rsBadgeAhead + IntToStr(aItem.Status.Ahead)
   else
-    lMaxWidth := lName.Width - 4;
-  if lMaxWidth < 0 then
-    lMaxWidth := 0;
-  lName.Caption := EllipsizeMiddleToWidth(lText, lMaxWidth, lCanvas);
+    Result := Result + '. ' + rsBadgeSyncOk;
+  if aItem.Status.SubmoduleNeedsMainFastForward then
+    Result := Result + '. ' + rsBadgeSubmoduleNoFastForward + aItem.Status.SubmoduleMainRemoteRef;
+  if aItem.Status.IsDirty then
+  begin
+    lDirty := BuildDirtyBadge(aItem.Status.DirtySummary, lHasFiles);
+    Result := Result + '. ' + lDirty;
+  end;
 end;
 
-procedure TfrmMain.RemoveButtonsFromMap(const aParent: TWinControl);
+procedure TfrmMain.GetRepoActionRects(const aItem: TRepoListItem; const aCellRect: TRect;
+  out aPullRect, aPushRect, aMoreRect: TRect);
 var
-  i: Integer;
-  lControl: TControl;
+  lRight: Integer;
+  lTop: Integer;
 begin
-  if aParent = nil then
+  aPullRect := Rect(0, 0, 0, 0);
+  aPushRect := Rect(0, 0, 0, 0);
+  lRight := aCellRect.Right - 12;
+  lTop := aCellRect.Top + ((aCellRect.Height - 30) div 2);
+  aMoreRect := Rect(lRight - 30, lTop, lRight, lTop + 30);
+  lRight := aMoreRect.Left - 6;
+  if aItem.State <> TRepoListItemState.rlisReady then
     Exit;
-  for i := aParent.ControlCount - 1 downto 0 do
+  if aItem.Status.IsDirty then
   begin
-    lControl := aParent.Controls[i];
-    if lControl is TButton then
-      fButtonRepoMap.Remove(lControl);
-    if lControl is TWinControl then
-      RemoveButtonsFromMap(TWinControl(lControl));
+    aPushRect := Rect(lRight - 30, lTop, lRight, lTop + 30);
+    lRight := aPushRect.Left - 6;
   end;
+  if aItem.Status.IsOutOfDate then
+    aPullRect := Rect(lRight - 30, lTop, lRight, lTop + 30);
+end;
+
+procedure TfrmMain.ShowRepoPopup(const aRepoRoot: string; const aPoint: TPoint);
+begin
+  if aRepoRoot = '' then
+    Exit;
+  PrepareRepoPopup(aRepoRoot);
+  pmRepoActions.Popup(aPoint.X, aPoint.Y);
+end;
+
+procedure TfrmMain.PrepareRepoPopup(const aRepoRoot: string);
+var
+  lStatus: TRepoStatus;
+begin
+  fPopupRepoRoot := aRepoRoot;
+  if fRepoStatusMap.TryGetValue(aRepoRoot, lStatus) then
+  begin
+    miRepoCommit.Visible := lStatus.IsDirty;
+    miRepoFixSubmoduleMain.Visible := lStatus.SubmoduleNeedsMainFastForward;
+  end else begin
+    miRepoCommit.Visible := False;
+    miRepoFixSubmoduleMain.Visible := False;
+  end;
+  miRepoTortoiseCommit.Visible := fTortoiseGitExe <> '';
+  miRepoTortoiseSync.Visible := fTortoiseGitExe <> '';
 end;
 
 procedure TfrmMain.HandleUiEvent(const aEvent: TUiEvent);
@@ -1239,6 +1095,8 @@ begin
         pbProgress.Visible := False;
         pbProgress.Position := 0;
       end;
+    TUiEventKind.uekRepoWaiting:
+      AddWaitingRepo(aEvent.RepoRoot);
     TUiEventKind.uekRepoResult:
       AddRepoPanel(aEvent.RepoStatus);
     TUiEventKind.uekScanFinished:
@@ -1254,6 +1112,8 @@ begin
         UpdateStatusText(aEvent.Text);
         if aEvent.RepoStatus.RepoRoot <> '' then
           UpdateRepoPanel(aEvent.RepoStatus);
+        if aEvent.RelatedRepoStatus.RepoRoot <> '' then
+          UpdateRepoPanel(aEvent.RelatedRepoStatus);
         if aEvent.AlertText <> '' then
           MessageDlg(aEvent.AlertText, mtWarning, [mbOK], 0);
       end;
@@ -1269,6 +1129,7 @@ begin
   maxLog.Info(aText);
   lEvent := Default(TUiEvent);
   lEvent.Kind := TUiEventKind.uekLog;
+  lEvent.Generation := fScanGeneration;
   lEvent.Text := aText;
   fQueue.Enqueue(lEvent);
 end;
@@ -1276,6 +1137,7 @@ end;
 procedure TfrmMain.StartScan;
 var
   lEvent: TUiEvent;
+  lGeneration: Int64;
 begin
   if fScanThread <> nil then
     Exit;
@@ -1283,6 +1145,11 @@ begin
   ClearRepoPanels;
   memLog.Clear;
   UpdateStatusText(rsStatusScanning);
+  Inc(fScanGeneration);
+  fMaxUiBatchMilliseconds := 0;
+  fUiMetricsPending := True;
+  fQueue.ResetPeakCount;
+  lGeneration := fScanGeneration;
   QueueLog(cLogScanStarted);
 
   fCancelToken := TCancelToken.Create;
@@ -1290,6 +1157,7 @@ begin
 
   lEvent := Default(TUiEvent);
   lEvent.Kind := TUiEventKind.uekClearResults;
+  lEvent.Generation := lGeneration;
   fQueue.Enqueue(lEvent);
 
   fScanThread := TThread.CreateAnonymousThread(
@@ -1298,12 +1166,13 @@ begin
       lErrEvent: TUiEvent;
     begin
       try
-        fScanner.ExecuteScan(fSettings, fQueue, fCancelToken);
+        fScanner.ExecuteScan(fSettings, fQueue, fCancelToken, lGeneration);
       except
         on E: Exception do
         begin
           lErrEvent := Default(TUiEvent);
           lErrEvent.Kind := TUiEventKind.uekLog;
+          lErrEvent.Generation := lGeneration;
           lErrEvent.Text := 'Scan failed: ' + E.ClassName + ' - ' + E.Message;
           fQueue.Enqueue(lErrEvent);
           raise;
@@ -1323,59 +1192,227 @@ begin
   SetScanningState(False);
 end;
 
-procedure TfrmMain.RepoActionClick(Sender: TObject);
+procedure TfrmMain.RepoTreeGetText(aSender: TBaseVirtualTree; aNode: PVirtualNode;
+  aColumn: TColumnIndex; aTextType: TVSTTextType; var aCellText: string);
 var
-  lBtn: TButton;
-  lRepo: string;
-  lAction: TRepoAction;
+  lItem: TRepoListItem;
 begin
-  if not (Sender is TButton) then
-    Exit;
-  lBtn := TButton(Sender);
-  if not fButtonRepoMap.TryGetValue(lBtn, lRepo) then
-    Exit;
-
-  lAction := TRepoAction(lBtn.Tag);
-  ExecuteRepoAction(lAction, lRepo);
+  aCellText := '';
+  if RepoItemForNode(aNode, lItem) then
+    aCellText := BuildRepoAccessibilityText(lItem);
 end;
 
-procedure TfrmMain.RepoMoreClick(Sender: TObject);
-var
-  lBtn: TButton;
-  lRepo: string;
-  lPt: TPoint;
-  lStatus: TRepoStatus;
+procedure TfrmMain.RepoTreePaintText(aSender: TBaseVirtualTree; const aTargetCanvas: TCanvas;
+  aNode: PVirtualNode; aColumn: TColumnIndex; aTextType: TVSTTextType);
 begin
-  if not (Sender is TButton) then
-    Exit;
-  lBtn := TButton(Sender);
-  if not fButtonRepoMap.TryGetValue(lBtn, lRepo) then
-    Exit;
-  fPopupRepoRoot := lRepo;
-  if fRepoStatusMap.TryGetValue(lRepo, lStatus) then
+  aTargetCanvas.Font.Color := aTargetCanvas.Brush.Color;
+  aTargetCanvas.Font.Height := -1;
+end;
+
+procedure TfrmMain.RepoTreeAfterCellPaint(aSender: TBaseVirtualTree; aTargetCanvas: TCanvas;
+  aNode: PVirtualNode; aColumn: TColumnIndex; aCellRect: TRect);
+var
+  lItem: TRepoListItem;
+  lPullRect: TRect;
+  lPushRect: TRect;
+  lMoreRect: TRect;
+  lTextRect: TRect;
+  lBadgeRect: TRect;
+  lDirty: string;
+  lHasFiles: Boolean;
+  lBadgeX: Integer;
+  lBadgeRight: Integer;
+  lTextColor: TColor;
+  lSavedDc: Integer;
+
+  procedure DrawBadge(const aCaption: string; const aAlert: Boolean);
+  var
+    lWidth: Integer;
   begin
-    miRepoCommit.Visible := lStatus.IsDirty;
-    miRepoFixSubmoduleMain.Visible := lStatus.SubmoduleNeedsMainFastForward;
-  end else begin
-    miRepoCommit.Visible := False;
-    miRepoFixSubmoduleMain.Visible := False;
+    lWidth := aTargetCanvas.TextWidth(aCaption) + 16;
+    if lBadgeX + lWidth > lBadgeRight then
+      Exit;
+    lBadgeRect := Rect(lBadgeX, aCellRect.Top + 34, lBadgeX + lWidth, aCellRect.Top + 56);
+    if aAlert then
+      aTargetCanvas.Brush.Color := $00E7E7FF
+    else
+      aTargetCanvas.Brush.Color := $00F1F1F1;
+    aTargetCanvas.Pen.Color := $00D0D0D0;
+    aTargetCanvas.RoundRect(lBadgeRect.Left, lBadgeRect.Top, lBadgeRect.Right,
+      lBadgeRect.Bottom, 8, 8);
+    aTargetCanvas.Brush.Style := bsClear;
+    aTargetCanvas.Font.Color := clWindowText;
+    aTargetCanvas.TextOut(lBadgeRect.Left + 8, lBadgeRect.Top + 3, aCaption);
+    aTargetCanvas.Brush.Style := bsSolid;
+    Inc(lBadgeX, lWidth + 6);
   end;
-  lPt := lBtn.ClientToScreen(Point(0, lBtn.Height));
-  pmRepoActions.Popup(lPt.X, lPt.Y);
+
+  procedure DrawAction(const aRect: TRect; const aImageIndex: Integer);
+  var
+    lImageRect: TRect;
+  begin
+    if IsRectEmpty(aRect) then
+      Exit;
+    aTargetCanvas.Brush.Color := clWindow;
+    aTargetCanvas.Pen.Color := $00D0D0D0;
+    aTargetCanvas.RoundRect(aRect.Left, aRect.Top, aRect.Right, aRect.Bottom, 6, 6);
+    lImageRect := aRect;
+    InflateRect(lImageRect, -5, -5);
+    ButtonSvgCollection.Draw(aTargetCanvas, lImageRect, aImageIndex, True);
+  end;
+begin
+  if not RepoItemForNode(aNode, lItem) then
+    Exit;
+  lSavedDc := SaveDC(aTargetCanvas.Handle);
+  try
+    GetRepoActionRects(lItem, aCellRect, lPullRect, lPushRect, lMoreRect);
+    if TVirtualNodeState.vsSelected in aNode.States then
+      lTextColor := clHighlightText
+    else
+      lTextColor := clWindowText;
+
+    lTextRect := Rect(aCellRect.Left + 16, aCellRect.Top + 6, lMoreRect.Left - 8,
+      aCellRect.Top + 30);
+    if not IsRectEmpty(lPullRect) then
+      lTextRect.Right := lPullRect.Left - 8
+    else if not IsRectEmpty(lPushRect) then
+      lTextRect.Right := lPushRect.Left - 8;
+    aTargetCanvas.Brush.Style := bsClear;
+    aTargetCanvas.Font.Assign(Font);
+    aTargetCanvas.Font.Height := -16;
+    aTargetCanvas.Font.Style := [fsBold];
+    aTargetCanvas.Font.Color := lTextColor;
+    DrawText(aTargetCanvas.Handle, PChar(lItem.DisplayPath), -1, lTextRect,
+      DT_END_ELLIPSIS or DT_NOPREFIX or DT_SINGLELINE or DT_VCENTER);
+
+    aTargetCanvas.Font.Assign(Font);
+    aTargetCanvas.Font.Height := -13;
+    aTargetCanvas.Font.Style := [];
+    lBadgeX := aCellRect.Left + 16;
+    lBadgeRight := lTextRect.Right;
+    if lItem.State = TRepoListItemState.rlisWaiting then
+      DrawBadge(rsStatusWaiting, False)
+    else begin
+      DrawBadge(rsBadgeBranch + lItem.Status.Branch, False);
+      if lItem.Status.FetchFailed then
+        DrawBadge(rsBadgeFetchFailed, True)
+      else if not lItem.Status.HasOrigin then
+        DrawBadge(rsBadgeNoOrigin, True)
+      else if lItem.Status.Upstream = '' then
+        DrawBadge(rsBadgeNoUpstream, True)
+      else if lItem.Status.IsOutOfDate then
+        DrawBadge(rsBadgeBehind + IntToStr(lItem.Status.Behind), True)
+      else if lItem.Status.HasUnpushed then
+        DrawBadge(rsBadgeAhead + IntToStr(lItem.Status.Ahead), True)
+      else
+        DrawBadge(rsBadgeSyncOk, False);
+      if lItem.Status.SubmoduleNeedsMainFastForward then
+        DrawBadge(rsBadgeSubmoduleNoFastForward + lItem.Status.SubmoduleMainRemoteRef, True);
+      if lItem.Status.IsDirty then
+      begin
+        lDirty := BuildDirtyBadge(lItem.Status.DirtySummary, lHasFiles);
+        DrawBadge(lDirty, True);
+      end;
+    end;
+
+    DrawAction(lPullRect, 1);
+    DrawAction(lPushRect, 2);
+    aTargetCanvas.Brush.Color := clWindow;
+    aTargetCanvas.Pen.Color := $00D0D0D0;
+    aTargetCanvas.RoundRect(lMoreRect.Left, lMoreRect.Top, lMoreRect.Right,
+      lMoreRect.Bottom, 6, 6);
+    aTargetCanvas.Brush.Style := bsClear;
+    aTargetCanvas.Font.Assign(Font);
+    aTargetCanvas.Font.Style := [fsBold];
+    aTargetCanvas.Font.Color := clWindowText;
+    aTargetCanvas.TextOut(lMoreRect.Left + 9, lMoreRect.Top + 4, '...');
+    aTargetCanvas.Pen.Color := $00ECECEC;
+    aTargetCanvas.MoveTo(aCellRect.Left + 16, aCellRect.Bottom - 3);
+    aTargetCanvas.LineTo(aCellRect.Right - 12, aCellRect.Bottom - 3);
+  finally
+    RestoreDC(aTargetCanvas.Handle, lSavedDc);
+  end;
+end;
+
+procedure TfrmMain.RepoTreeMouseDown(aSender: TObject; aButton: TMouseButton;
+  aShift: TShiftState; X, Y: Integer);
+var
+  lNode: PVirtualNode;
+begin
+  lNode := RepoTree.GetNodeAt(X, Y);
+  if lNode = nil then
+    Exit;
+  RepoTree.FocusedNode := lNode;
+  RepoTree.Selected[lNode] := True;
+end;
+
+procedure TfrmMain.RepoTreeMouseUp(aSender: TObject; aButton: TMouseButton;
+  aShift: TShiftState; X, Y: Integer);
+var
+  lNode: PVirtualNode;
+  lItem: TRepoListItem;
+  lCellRect: TRect;
+  lPullRect: TRect;
+  lPushRect: TRect;
+  lMoreRect: TRect;
+  lPoint: TPoint;
+begin
+  if aButton <> mbLeft then
+    Exit;
+  lNode := RepoTree.GetNodeAt(X, Y);
+  if not RepoItemForNode(lNode, lItem) then
+    Exit;
+  lCellRect := RepoTree.GetDisplayRect(lNode, 0, False);
+  GetRepoActionRects(lItem, lCellRect, lPullRect, lPushRect, lMoreRect);
+  lPoint := Point(X, Y);
+  if PtInRect(lPullRect, lPoint) then
+    ExecuteRepoAction(TRepoAction.raPull, lItem.RepoRoot)
+  else if PtInRect(lPushRect, lPoint) then
+    ExecuteRepoAction(TRepoAction.raPush, lItem.RepoRoot)
+  else if PtInRect(lMoreRect, lPoint) then
+    ShowRepoPopup(lItem.RepoRoot, RepoTree.ClientToScreen(Point(lMoreRect.Left, lMoreRect.Bottom)));
+end;
+
+procedure TfrmMain.RepoActionsPopup(aSender: TObject);
+var
+  lRepoRoot: string;
+begin
+  lRepoRoot := SelectedRepoRoot;
+  if lRepoRoot = '' then
+  begin
+    fPopupRepoRoot := '';
+    Exit;
+  end;
+  PrepareRepoPopup(lRepoRoot);
 end;
 
 procedure TfrmMain.RepoMenuClick(Sender: TObject);
 var
   lAction: TRepoAction;
+  lError: string;
 begin
   if fPopupRepoRoot = '' then
     Exit;
-  if Sender = miRepoCommit then
+  if Sender = miRepoTortoiseCommit then
+  begin
+    if not TTortoiseGit.TryLaunch(fTortoiseGitExe, TTortoiseGitCommand.tgcCommit,
+      fPopupRepoRoot, lError) then
+      MessageDlg(lError, mtError, [mbOK], 0);
+    Exit;
+  end else if Sender = miRepoTortoiseSync then
+  begin
+    if not TTortoiseGit.TryLaunch(fTortoiseGitExe, TTortoiseGitCommand.tgcSync,
+      fPopupRepoRoot, lError) then
+      MessageDlg(lError, mtError, [mbOK], 0);
+    Exit;
+  end else if Sender = miRepoCommit then
     lAction := TRepoAction.raCommit
   else if Sender = miRepoFetch then
     lAction := TRepoAction.raFetch
   else if Sender = miRepoFixSubmoduleMain then
     lAction := TRepoAction.raFixSubmoduleMain
+  else if Sender = miRepoRescan then
+    lAction := TRepoAction.raRescan
   else if Sender = miRepoOpenFolder then
     lAction := TRepoAction.raOpenFolder
   else
@@ -1439,6 +1476,9 @@ var
   lEvent: TUiEvent;
   lMatched: TArray<string>;
   lExisting: TRepoStatus;
+  lParentExisting: TRepoStatus;
+  lParentRepoRoot: string;
+  lParentMatched: TArray<string>;
   lFetchRemote: string;
   lSlashPos: integer;
 begin
@@ -1451,15 +1491,25 @@ begin
     TRepoAction.raPush: lActionName := rsPush;
     TRepoAction.raFetch: lActionName := rsFetch;
     TRepoAction.raFixSubmoduleMain: lActionName := rsFixSubmoduleMain;
+    TRepoAction.raRescan: lActionName := rsRescanAction;
   else
     lActionName := rsOpenFolder;
   end;
 
   lMatched := [];
+  lParentRepoRoot := '';
+  lParentMatched := [];
   lFetchRemote := '';
   if fRepoStatusMap.TryGetValue(aRepoRoot, lExisting) then
   begin
     lMatched := lExisting.MatchedFolders;
+    if (aAction in [TRepoAction.raPull, TRepoAction.raPush]) and lExisting.IsSubmodule and
+      (lExisting.SuperprojectRoot <> '') and
+      fRepoStatusMap.TryGetValue(lExisting.SuperprojectRoot, lParentExisting) then
+    begin
+      lParentRepoRoot := lParentExisting.RepoRoot;
+      lParentMatched := lParentExisting.MatchedFolders;
+    end;
     if lExisting.Upstream <> '' then
     begin
       lSlashPos := lExisting.Upstream.IndexOf('/');
@@ -1478,6 +1528,9 @@ begin
         lStatus: TRepoStatus;
         lStatusErr: string;
         lStatusOk: Boolean;
+        lParentStatus: TRepoStatus;
+        lParentStatusErr: string;
+        lParentStatusOk: Boolean;
         lScanner: TRepoScanner;
       begin
         try
@@ -1489,6 +1542,7 @@ begin
             TRepoAction.raPush: lOk := fGit.TryPush(aRepoRoot, lErr);
             TRepoAction.raFetch: lOk := fGit.TryFetchRemote(aRepoRoot, lFetchRemote, 60000, lErr);
             TRepoAction.raFixSubmoduleMain: lOk := fGit.TryFixSubmoduleFastForwardToMain(aRepoRoot, aMessage, lErr);
+            TRepoAction.raRescan: lOk := True;
           end;
 
           if lOk then
@@ -1506,21 +1560,52 @@ begin
 
         lStatusOk := False;
         lStatusErr := '';
+        lParentStatusOk := False;
+        lParentStatusErr := '';
         try
           lScanner := TRepoScanner.Create(fGit);
           try
-            lStatusOk := lScanner.TryRefreshRepoStatus(fSettings, aRepoRoot, lMatched, lStatus, lStatusErr);
+            try
+              lStatusOk := lScanner.TryRefreshRepoStatus(fSettings, aRepoRoot, lMatched, lStatus, lStatusErr);
+            except
+              on E: Exception do
+                lStatusErr := E.Message;
+            end;
+            if lParentRepoRoot <> '' then
+            begin
+              try
+                lParentStatusOk := lScanner.TryRefreshRepoStatus(fSettings, lParentRepoRoot,
+                  lParentMatched, lParentStatus, lParentStatusErr);
+              except
+                on E: Exception do
+                  lParentStatusErr := E.Message;
+              end;
+            end;
           finally
             lScanner.Free;
           end;
         except
           on E: Exception do
           begin
-            lStatusOk := False;
             if lStatusErr = '' then
               lStatusErr := E.Message;
+            if lParentStatusErr = '' then
+              lParentStatusErr := E.Message;
           end;
         end;
+
+        if aAction = TRepoAction.raRescan then
+        begin
+          lOk := lStatusOk;
+          lErr := lStatusErr;
+          if lOk then
+            lMsg := Format('%s %s: %s', [cLogAction, lActionName, cLogActionOk])
+          else
+            lMsg := Format('%s %s: %s - %s', [cLogAction, lActionName, cLogActionFailed, lErr]);
+        end;
+
+        if (lParentRepoRoot <> '') and (not lParentStatusOk) then
+          lMsg := lMsg + ' | ' + Format(cLogParentRefreshFailed, [lParentStatusErr]);
 
         if fShuttingDown then
           Exit;
@@ -1535,6 +1620,8 @@ begin
           lEvent.AlertText := Format(rsPullConflictAlert, [aRepoRoot, lErr]);
         if lStatusOk then
           lEvent.RepoStatus := lStatus;
+        if lParentStatusOk then
+          lEvent.RelatedRepoStatus := lParentStatus;
         fQueue.Enqueue(lEvent);
       end
     );
@@ -1592,18 +1679,13 @@ end;
 
 procedure TfrmMain.btnBrowseStartClick(Sender: TObject);
 var
-  lDialog: TFileOpenDialog;
+  lPaths: TArray<string>;
 begin
-  lDialog := TFileOpenDialog.Create(nil);
-  try
-    lDialog.Options := lDialog.Options + [fdoPickFolders];
-    lDialog.Title := rsStartPath;
-    if edtStartPath.Text <> '' then
-      lDialog.DefaultFolder := edtStartPath.Text;
-    if lDialog.Execute then
-      edtStartPath.Text := lDialog.FileName;
-  finally
-    lDialog.Free;
+  if TfrmScanPathsDialog.Execute(Self, fSettings.ScanPaths, lPaths) then
+  begin
+    fSettings.ScanPaths := lPaths;
+    fSettings.StartPath := lPaths[0];
+    UpdateScanPathsDisplay;
   end;
 end;
 
@@ -1637,42 +1719,32 @@ begin
   CopyStatusToClipboard;
 end;
 
-procedure TfrmMain.sbReposResize(Sender: TObject);
-begin
-  UpdateRepoCardWidths;
-end;
-
-
-procedure TfrmMain.UpdateRepoCardWidths;
-var
-  i: Integer;
-  lWidth: Integer;
-  lControl: TControl;
-  lCard: TPanel;
-begin
-  if fpRepos = nil then
-    Exit;
-  lWidth := fpRepos.ClientWidth - fpRepos.Padding.Left - fpRepos.Padding.Right;
-  if lWidth < 120 then
-    lWidth := 120;
-  for i := 0 to fpRepos.ControlCount - 1 do
-  begin
-    lControl := fpRepos.Controls[i];
-    lControl.Width := lWidth;
-    if lControl is TPanel then
-    begin
-      lCard := TPanel(lControl);
-      UpdateRepoPathLabel(lCard);
-    end;
-  end;
-end;
 
 procedure TfrmMain.tmrUiTimer(Sender: TObject);
 var
-  lEvent: TUiEvent;
+  lMetrics: string;
+  lResult: TUiEventPumpResult;
+  lStopwatch: TStopwatch;
 begin
-  while fQueue.TryDequeue(lEvent) do
-    HandleUiEvent(lEvent);
+  lStopwatch := TStopwatch.StartNew;
+  lResult := TUiEventPump.Process(fQueue, fScanGeneration, cMaxUiEventsPerTick,
+    cMaxUiMillisecondsPerTick, HandleUiEvent);
+  if fRepoViewDirty and ((not lResult.HasMore) or
+    (GetTickCount64 - fLastRepoViewFlushTick >= cRepoViewFlushInterval)) then
+    FlushRepoView;
+  if lStopwatch.ElapsedMilliseconds > fMaxUiBatchMilliseconds then
+    fMaxUiBatchMilliseconds := lStopwatch.ElapsedMilliseconds;
+  if lResult.HasMore then
+    tmrUi.Interval := cBusyUiTimerInterval
+  else
+    tmrUi.Interval := cIdleUiTimerInterval;
+  if fUiMetricsPending and (fScanThread = nil) and not lResult.HasMore then
+  begin
+    fUiMetricsPending := False;
+    lMetrics := Format(cLogUiMetrics, [fQueue.PeakCount, fMaxUiBatchMilliseconds]);
+    memLog.Lines.Add(lMetrics);
+    maxLog.Info(lMetrics);
+  end;
   CleanupFinishedActionThreads;
 end;
 

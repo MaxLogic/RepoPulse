@@ -2,7 +2,8 @@ unit URepoPathDisplay;
 
 interface
 
-function BuildRelativeRepoPath(const aRepoRoot: string; const aStartPath: string): string;
+function BuildRelativeRepoPath(const aRepoRoot: string; const aStartPath: string): string; overload;
+function BuildRelativeRepoPath(const aRepoRoot: string; const aStartPaths: TArray<string>): string; overload;
 
 implementation
 
@@ -46,6 +47,27 @@ begin
   Result := ExtractFileName(ExcludeTrailingPathDelimiter(aRepoRoot));
   if Result = '' then
     Result := NormalizeDisplayPath(aRepoRoot);
+end;
+
+function BuildRelativeRepoPath(const aRepoRoot: string; const aStartPaths: TArray<string>): string;
+var
+  lStartPath: string;
+  lBase: string;
+  lBaseNorm: string;
+  lBestBase: string;
+  lRepoNorm: string;
+begin
+  lRepoNorm := AnsiLowerCase(NormalizeDisplayPath(aRepoRoot));
+  lBestBase := '';
+  for lStartPath in aStartPaths do
+  begin
+    lBase := NormalizeDisplayPath(Trim(lStartPath));
+    lBaseNorm := AnsiLowerCase(lBase);
+    if (lBaseNorm <> '') and ((lRepoNorm = lBaseNorm) or lRepoNorm.StartsWith(lBaseNorm + '/')) and
+      (Length(lBase) > Length(lBestBase)) then
+      lBestBase := lBase;
+  end;
+  Result := BuildRelativeRepoPath(aRepoRoot, lBestBase);
 end;
 
 end.

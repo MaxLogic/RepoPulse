@@ -1,22 +1,23 @@
 program ScanGitRepos;
 
 uses
-   madExcept,
-  madLinkDisAsm,
-  madListHardware,
-  madListProcesses,
-  madListModules,
- System.SysUtils,
+  System.SysUtils,
+
   Vcl.Forms,
-  MaxLogic.Logger, maxLogic.ioutils,
-  UMainForm in '..\src\UMainForm.pas' {frmMain},
+
+  madExcept, madLinkDisAsm, madListHardware, madListModules, madListProcesses,
+  maxLogic.ioutils, MaxLogic.Logger,
+
   UAppSettings in '..\src\UAppSettings.pas',
   UGitClient in '..\src\UGitClient.pas',
+  UMainForm in '..\src\UMainForm.pas' {frmMain},
   UModels in '..\src\UModels.pas',
+  UPathRules in '..\src\UPathRules.pas',
   URepoCache in '..\src\URepoCache.pas',
   URepoScanner in '..\src\URepoScanner.pas',
-  UUiEventQueue in '..\src\UUiEventQueue.pas',
-  UPathRules in '..\src\UPathRules.pas';
+  UScanPathsDialog in '..\src\UScanPathsDialog.pas' {frmScanPathsDialog},
+  UTortoiseGit in '..\src\UTortoiseGit.pas',
+  UUiEventQueue in '..\src\UUiEventQueue.pas';
 
 {$R *.res}
 

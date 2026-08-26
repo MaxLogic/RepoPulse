@@ -57,6 +57,8 @@ type
     function TryRunGit(const aRepo: string; const aArgs: TArray<string>; out aResult: TGitResult;
       out aError: string; const aTimeoutMs: Cardinal = 0): Boolean;
     function TryGetRepoRoot(const aPath: string; out aRepoRoot: string; out aError: string): Boolean;
+    function TryGetSuperprojectRoot(const aRepoRoot: string; out aSuperprojectRoot: string;
+      out aError: string): Boolean;
     function TryIsInsideWorkTree(const aRepoRoot: string; out aIsInside: Boolean; out aError: string): Boolean;
     function TryGetBranch(const aRepoRoot: string; out aBranch: string; out aError: string): Boolean;
     function TryGetUpstream(const aRepoRoot: string; out aUpstream: string; out aError: string): Boolean;
@@ -480,6 +482,32 @@ begin
   Result := aRepoRoot <> '';
   if not Result then
     aError := 'empty repo root';
+end;
+
+function TGitClient.TryGetSuperprojectRoot(const aRepoRoot: string; out aSuperprojectRoot: string;
+  out aError: string): Boolean;
+var
+  lResult: TGitResult;
+  lError: string;
+begin
+  aSuperprojectRoot := '';
+  aError := '';
+
+  if not TryRunGit(aRepoRoot, ['rev-parse', '--show-superproject-working-tree'], lResult, lError, 0) then
+  begin
+    aError := lError;
+    Exit(False);
+  end;
+  if lResult.ExitCode <> 0 then
+  begin
+    aError := lResult.OutputText.Trim;
+    Exit(False);
+  end;
+
+  if (Length(lResult.OutputLines) > 0) and (lResult.OutputLines[0].Trim <> '') then
+    aSuperprojectRoot := ExcludeTrailingPathDelimiter(
+      TPath.GetFullPath(lResult.OutputLines[0].Trim.Replace('/', PathDelim)));
+  Result := True;
 end;
 
 function TGitClient.TryIsInsideWorkTree(const aRepoRoot: string; out aIsInside: Boolean; out aError: string): Boolean;

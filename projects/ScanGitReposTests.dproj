@@ -95,7 +95,7 @@
         <SanitizedProjectName>ScanGitReposTests</SanitizedProjectName>
         <VerInfo_Locale>1045</VerInfo_Locale>
         <VerInfo_Keys>CompanyName=;FileDescription=;FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProductName=;ProductVersion=1.0.0.0;Comments=;CFBundleName=</VerInfo_Keys>
-        <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
+        <DCC_Namespace>Vcl;Vcl.Imaging;Vcl.Touch;Vcl.Samples;Vcl.Shell;System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
         <Icon_MainIcon>$(BDS)\bin\delphi_PROJECTICON.ico</Icon_MainIcon>
         <Icns_MainIcns>$(BDS)\bin\delphi_PROJECTICNS.icns</Icns_MainIcns>
         <DCC_ExeOutput>..\tests</DCC_ExeOutput>
@@ -198,9 +198,20 @@
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
+        <DCCReference Include="..\tests\TestAppSettings.pas"/>
         <DCCReference Include="..\tests\TestGitParsing.pas"/>
         <DCCReference Include="..\tests\TestIgnoreRules.pas"/>
         <DCCReference Include="..\tests\TestPathUtils.pas"/>
+        <DCCReference Include="..\tests\TestRepoDiscovery.pas"/>
+        <DCCReference Include="..\tests\TestRepoCache.pas"/>
+        <DCCReference Include="..\tests\TestRepoListModel.pas"/>
+        <DCCReference Include="..\tests\TestScanPaths.pas"/>
+        <DCCReference Include="..\tests\TestTortoiseGit.pas"/>
+        <DCCReference Include="..\tests\TestUiEventQueue.pas"/>
+        <DCCReference Include="..\tests\TestUiForms.pas"/>
+        <DCCReference Include="..\src\UEscapeDialog.pas"/>
+        <DCCReference Include="..\src\URepoListModel.pas"/>
+        <DCCReference Include="..\src\UTortoiseGit.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
             <DependentOn>..\..\MaxLogicFoundation\MaxLogicDefault.optset</DependentOn>

@@ -6,10 +6,19 @@ uses
   System.IOUtils, System.SysUtils,
 
   DUnitX.Loggers.Console, DUnitX.Loggers.XML.NUnit, DUnitX.TestFramework,
+  TestAppSettings in '..\tests\TestAppSettings.pas',
   TestGitParsing in '..\tests\TestGitParsing.pas',
   TestIgnoreRules in '..\tests\TestIgnoreRules.pas',
   TestPathUtils in '..\tests\TestPathUtils.pas',
-  TestRepoPathDisplay in '..\tests\TestRepoPathDisplay.pas';
+  TestRepoDiscovery in '..\tests\TestRepoDiscovery.pas',
+  TestRepoCache in '..\tests\TestRepoCache.pas',
+  TestRepoListModel in '..\tests\TestRepoListModel.pas',
+  TestRepoPathDisplay in '..\tests\TestRepoPathDisplay.pas',
+  TestScanPaths in '..\tests\TestScanPaths.pas',
+  TestTortoiseGit in '..\tests\TestTortoiseGit.pas',
+  TestUiEventQueue in '..\tests\TestUiEventQueue.pas',
+  TestUiForms in '..\tests\TestUiForms.pas',
+  UTortoiseGit in '..\src\UTortoiseGit.pas';
 
 var
   lRunner: ITestRunner;
@@ -30,7 +39,8 @@ begin
 
     lResultsPath := TPath.Combine(GetCurrentDir, 'TestResults.xml');
     lResultsDir := ExtractFilePath(lResultsPath);
-    if (lResultsDir <> '') and (not DirectoryExists(lResultsDir)) then begin
+    if (lResultsDir <> '') and (not DirectoryExists(lResultsDir)) then
+    begin
       if not ForceDirectories(lResultsDir) then
         raise EInOutError.CreateFmt('Unable to create test results directory: %s (cwd=%s)', [lResultsDir, GetCurrentDir]);
     end;
@@ -50,7 +60,8 @@ begin
     else
       ExitCode := 0;
   except
-    on E: Exception do begin
+    on E: Exception do
+    begin
       Writeln(E.ClassName, ': ', E.Message);
       ExitCode := 1;
     end;

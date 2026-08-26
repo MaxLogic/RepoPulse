@@ -161,10 +161,16 @@
         <DCCReference Include="..\src\UMainForm.pas">
             <Form>frmMain</Form>
         </DCCReference>
+        <DCCReference Include="..\src\UScanPathsDialog.pas">
+            <Form>frmScanPathsDialog</Form>
+        </DCCReference>
         <DCCReference Include="..\src\UAppSettings.pas"/>
+        <DCCReference Include="..\src\UEscapeDialog.pas"/>
         <DCCReference Include="..\src\UGitClient.pas"/>
+        <DCCReference Include="..\src\UTortoiseGit.pas"/>
         <DCCReference Include="..\src\UModels.pas"/>
         <DCCReference Include="..\src\URepoCache.pas"/>
+        <DCCReference Include="..\src\URepoListModel.pas"/>
         <DCCReference Include="..\src\URepoScanner.pas"/>
         <DCCReference Include="..\src\UUiEventQueue.pas"/>
         <DCCReference Include="..\src\UPathRules.pas"/>
@@ -195,6 +201,24 @@
                     <Excluded_Packages Name="$(BDSBIN)\dclofficexp290.bpl">Microsoft Office XP Sample Automation Server Wrapper Components</Excluded_Packages>
                     <Excluded_Packages Name="F:\TMS-SmartSetUp\.tmssetup\build\bpl\Win32\VCL_TMSVCLGridExcelBridge_DESIGN290.bpl">TMS VCL Grid Excel Bridge (Design)</Excluded_Packages>
                 </Excluded_Packages>
+                <Deployment Version="4">
+                    <DeployFile Required="true" LocalName="$(BDS)\bin\sk4d.dll" Configuration="Debug" Class="Skia">
+                        <Platform Name="Win32">
+                            <RemoteDir>.\</RemoteDir>
+                            <Operation>0</Operation>
+                            <RemoteName>sk4d.dll</RemoteName>
+                            <Overwrite>true</Overwrite>
+                        </Platform>
+                    </DeployFile>
+                    <DeployFile Required="true" LocalName="$(BDS)\bin\sk4d.dll" Configuration="Release" Class="Skia">
+                        <Platform Name="Win32">
+                            <RemoteDir>.\</RemoteDir>
+                            <Operation>0</Operation>
+                            <RemoteName>sk4d.dll</RemoteName>
+                            <Overwrite>true</Overwrite>
+                        </Platform>
+                    </DeployFile>
+                </Deployment>
             </Delphi.Personality>
             <Platforms>
                 <Platform value="Android64">False</Platform>
