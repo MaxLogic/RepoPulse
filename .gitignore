@@ -73,3 +73,6 @@ TestResults.xml
 /build-and-run-tests.sh
 /build-and-run-tests.bat
 /TASKS.md
+.agents/
+.codex/
+.claude/skills/
