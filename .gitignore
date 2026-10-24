@@ -76,3 +76,5 @@ TestResults.xml
 .agents/
 .codex/
 .claude/skills/
+# DFM check caches
+*.dfmcheck.cache
