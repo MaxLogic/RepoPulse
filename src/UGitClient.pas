@@ -52,6 +52,8 @@ type
     function TryRunProcess(const aCommandLine: string; const aWorkDir: string;
       const aTimeoutMs: Cardinal; out aExitCode: Cardinal; out aOutput: TBytes; out aError: string): Boolean;
     function GetWriteAccessInfo(const aPath: string): TWriteAccessInfo;
+    function TryGetDetachedPullTarget(const aRepoRoot: string; out aRemote,
+      aBranch, aError: string): Boolean;
     function ShouldRetryFetch(const aOutput: string): Boolean;
   public
     function TryRunGit(const aRepo: string; const aArgs: TArray<string>; out aResult: TGitResult;
@@ -925,11 +927,22 @@ end;
 
 function TGitClient.TryPull(const aRepoRoot: string; out aError: string): Boolean;
 var
+  lArgs: TArray<string>;
+  lBranch: string;
   lRes: TGitResult;
   lErr: string;
+  lPullBranch: string;
+  lRemote: string;
 begin
   aError := '';
-  if not TryRunGit(aRepoRoot, ['pull', '--ff-only'], lRes, lErr, cDefaultNetworkTimeoutMs) then
+  lArgs := ['pull', '--ff-only'];
+  if TryGetBranch(aRepoRoot, lBranch, lErr) and SameText(lBranch, rsBranchDetached) then
+  begin
+    if not TryGetDetachedPullTarget(aRepoRoot, lRemote, lPullBranch, aError) then
+      Exit(False);
+    lArgs := ['pull', '--ff-only', lRemote, lPullBranch];
+  end;
+  if not TryRunGit(aRepoRoot, lArgs, lRes, lErr, cDefaultNetworkTimeoutMs) then
   begin
     aError := lErr;
     Exit(False);
@@ -937,6 +950,43 @@ begin
   Result := lRes.ExitCode = 0;
   if not Result then
     aError := lRes.OutputText.Trim;
+end;
+
+function TGitClient.TryGetDetachedPullTarget(const aRepoRoot: string; out aRemote,
+  aBranch, aError: string): Boolean;
+const
+  cRemoteRefPrefix = 'refs/remotes/';
+var
+  lError: string;
+  lRef: string;
+  lResult: TGitResult;
+  lSlashPos: Integer;
+begin
+  aRemote := '';
+  aBranch := '';
+  aError := '';
+  lRef := '';
+  if TryRunGit(aRepoRoot, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD'],
+    lResult, lError, 0) and (lResult.ExitCode = 0) and
+    (Length(lResult.OutputLines) > 0) then
+    lRef := Trim(lResult.OutputLines[0]);
+  if lRef.StartsWith(cRemoteRefPrefix) then
+    Delete(lRef, 1, Length(cRemoteRefPrefix))
+  else
+    lRef := '';
+  if (lRef = '') and not TryGetPreferredOriginMainRef(aRepoRoot, lRef, lError) then
+    lRef := '';
+  lSlashPos := lRef.IndexOf('/');
+  if lSlashPos <= 0 then
+  begin
+    aError := 'Detached HEAD has no remote default branch to pull.';
+    Exit(False);
+  end;
+  aRemote := lRef.Substring(0, lSlashPos);
+  aBranch := lRef.Substring(lSlashPos + 1);
+  Result := aBranch <> '';
+  if not Result then
+    aError := 'Detached HEAD has no remote default branch to pull.';
 end;
 
 function TGitClient.TryPush(const aRepoRoot: string; out aError: string): Boolean;

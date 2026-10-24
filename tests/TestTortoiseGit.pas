@@ -28,6 +28,8 @@ begin
     TTortoiseGit.BuildParameters(TTortoiseGitCommand.tgcCommit, 'F:\Work Tree\Repo'));
   Assert.AreEqual('/command:sync /path:"F:\Work Tree\Repo"',
     TTortoiseGit.BuildParameters(TTortoiseGitCommand.tgcSync, 'F:\Work Tree\Repo'));
+  Assert.AreEqual('/command:log /path:"F:\Work Tree\Repo"',
+    TTortoiseGit.BuildParameters(TTortoiseGitCommand(2), 'F:\Work Tree\Repo'));
 end;
 
 procedure TTortoiseGitTests.ResolveExecutable_InstallDirectoryAndPath;

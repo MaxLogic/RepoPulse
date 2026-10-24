@@ -7,7 +7,8 @@ uses
 
   Winapi.Windows,
 
-  AutoFree, maxLogic.ioutils;
+  AutoFree, maxLogic.ioutils,
+  UFolderSelection;
 
 type
   TAppSettings = class
@@ -16,12 +17,20 @@ type
     fScanPaths: TArray<string>;
     fMaxDepth: Integer;
     fExcludeDirs: TArray<string>;
+    fRepositoryExclusions: TArray<string>;
+    fStatusFilterIndex: Integer;
     fThrottleLimit: Integer;
+    fActionThrottleLimit: Integer;
     fCacheTtlSeconds: Integer;
     fDebugLogEnabled: Boolean;
     fDebugLogPath: string;
     fTargetRepoName: string;
     fRepoNameHistory: TArray<string>;
+    fFolderSelectionRules: TArray<TFolderSelectionRule>;
+    fExpandedFolders: TArray<string>;
+    fFoldersPaneWidth: Integer;
+    fFolderSelectionMigrated: Boolean;
+    procedure LoadFolderSelection(const aIni: TMemIniFile);
     class function DefaultExcludeDirs: TArray<string>; static;
     class function GetExeFolder: string; static;
     class function GetLegacySettingsFolder: string; static;
@@ -36,12 +45,19 @@ type
     property ScanPaths: TArray<string> read fScanPaths write fScanPaths;
     property MaxDepth: Integer read fMaxDepth write fMaxDepth;
     property ExcludeDirs: TArray<string> read fExcludeDirs write fExcludeDirs;
+    property RepositoryExclusions: TArray<string> read fRepositoryExclusions write fRepositoryExclusions;
+    property StatusFilterIndex: Integer read fStatusFilterIndex write fStatusFilterIndex;
     property ThrottleLimit: Integer read fThrottleLimit write fThrottleLimit;
+    property ActionThrottleLimit: Integer read fActionThrottleLimit write fActionThrottleLimit;
     property CacheTtlSeconds: Integer read fCacheTtlSeconds write fCacheTtlSeconds;
     property DebugLogEnabled: Boolean read fDebugLogEnabled write fDebugLogEnabled;
     property DebugLogPath: string read fDebugLogPath write fDebugLogPath;
     property TargetRepoName: string read fTargetRepoName write fTargetRepoName;
     property RepoNameHistory: TArray<string> read fRepoNameHistory write fRepoNameHistory;
+    property FolderSelectionRules: TArray<TFolderSelectionRule> read fFolderSelectionRules write fFolderSelectionRules;
+    property ExpandedFolders: TArray<string> read fExpandedFolders write fExpandedFolders;
+    property FoldersPaneWidth: Integer read fFoldersPaneWidth write fFoldersPaneWidth;
+    property FolderSelectionMigrated: Boolean read fFolderSelectionMigrated;
   end;
 
 implementation
@@ -50,12 +66,22 @@ const
   cSectionScan = 'Scan';
   cSectionDebug = 'Debug';
   cSectionHistory = 'History';
+  cSectionFolders = 'Folders';
+  cKeyFolderVersion = 'Version';
+  cKeyFolderRuleCount = 'RuleCount';
+  cKeyFolderPath = 'Path';
+  cKeyFolderIncluded = 'Included';
+  cKeyExpandedFolders = 'ExpandedFolders';
+  cKeyFoldersPaneWidth = 'PaneWidth';
 
   cKeyStartPath = 'StartPath';
   cKeyScanPaths = 'ScanPaths';
   cKeyMaxDepth = 'MaxDepth';
   cKeyExcludeDirs = 'ExcludeDirs';
+  cKeyRepositoryExclusions = 'RepositoryExclusions';
+  cKeyStatusFilterIndex = 'StatusFilterIndex';
   cKeyThrottleLimit = 'ThrottleLimit';
+  cKeyActionThrottleLimit = 'ActionThrottleLimit';
   cKeyCacheTtlSeconds = 'CacheTtlSeconds';
   cKeyDebugLogEnabled = 'DebugLogEnabled';
   cKeyDebugLogPath = 'DebugLogPath';
@@ -76,11 +102,13 @@ begin
   fMaxDepth := 10;
   fExcludeDirs := DefaultExcludeDirs;
   fThrottleLimit := 6;
+  fActionThrottleLimit := 3;
   fCacheTtlSeconds := 3600;
   fDebugLogEnabled := False;
   fDebugLogPath := '';
   fTargetRepoName := '*';
   fRepoNameHistory := ['*'];
+  fFoldersPaneWidth := 260;
 end;
 
 class function TAppSettings.GetSettingsFilePath: string;
@@ -111,10 +139,48 @@ begin
   Result := ExcludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0)));
 end;
 
+procedure TAppSettings.LoadFolderSelection(const aIni: TMemIniFile);
+var
+  g: TGarbos;
+  lList: TStringList;
+  lVersion, lCount: Integer;
+  lPath: string;
+  i: Integer;
+begin
+  lVersion := 0;
+  if Assigned(aIni) then
+    lVersion := aIni.ReadInteger(cSectionFolders, cKeyFolderVersion, 0);
+  fFolderSelectionRules := [];
+  fFolderSelectionMigrated := lVersion = 0;
+  if fFolderSelectionMigrated then
+  begin
+    for lPath in fScanPaths do
+      fFolderSelectionRules := SetFolderSelection(lPath, True, fFolderSelectionRules);
+    Exit;
+  end;
+
+  lCount := aIni.ReadInteger(cSectionFolders, cKeyFolderRuleCount, 0);
+  if lCount < 0 then
+    lCount := 0;
+  SetLength(fFolderSelectionRules, lCount);
+  for i := 0 to lCount - 1 do
+  begin
+    fFolderSelectionRules[i].Path := NormalizeSelectionPath(
+      aIni.ReadString(cSectionFolders, cKeyFolderPath + IntToStr(i), ''));
+    fFolderSelectionRules[i].Included := aIni.ReadBool(cSectionFolders,
+      cKeyFolderIncluded + IntToStr(i), False);
+  end;
+  GC(lList, TStringList.Create, g);
+  lList.StrictDelimiter := True;
+  lList.CommaText := aIni.ReadString(cSectionFolders, cKeyExpandedFolders, '');
+  fExpandedFolders := lList.ToStringArray;
+  fFoldersPaneWidth := aIni.ReadInteger(cSectionFolders, cKeyFoldersPaneWidth, 260);
+end;
+
 procedure TAppSettings.Load;
 var
   g: TGarbos;
-  lIni: TIniFile;
+  lIni: TMemIniFile;
   lList: TStringList;
   lValue: string;
   i: Integer;
@@ -130,9 +196,12 @@ begin
   end;
 
   if not FileExists(lFilePath) then
+  begin
+    LoadFolderSelection(nil);
     Exit;
+  end;
 
-  GC(lIni, TIniFile.Create(lFilePath), g);
+  GC(lIni, TMemIniFile.Create(lFilePath), g);
 
   fStartPath := lIni.ReadString(cSectionScan, cKeyStartPath, fStartPath);
   lValue := lIni.ReadString(cSectionScan, cKeyScanPaths, '');
@@ -152,8 +221,11 @@ begin
   fStartPath := fScanPaths[0];
   fMaxDepth := lIni.ReadInteger(cSectionScan, cKeyMaxDepth, fMaxDepth);
   fThrottleLimit := lIni.ReadInteger(cSectionScan, cKeyThrottleLimit, fThrottleLimit);
+  fActionThrottleLimit := lIni.ReadInteger(cSectionScan, cKeyActionThrottleLimit,
+    fActionThrottleLimit);
   fCacheTtlSeconds := lIni.ReadInteger(cSectionScan, cKeyCacheTtlSeconds, fCacheTtlSeconds);
   fTargetRepoName := lIni.ReadString(cSectionScan, cKeyTargetRepoName, fTargetRepoName);
+  fStatusFilterIndex := lIni.ReadInteger(cSectionScan, cKeyStatusFilterIndex, 0);
   if (Trim(fTargetRepoName) = '') or SameText(Trim(fTargetRepoName), cLegacyDefaultRepoName) then
     fTargetRepoName := '*';
   fDebugLogEnabled := lIni.ReadBool(cSectionDebug, cKeyDebugLogEnabled, fDebugLogEnabled);
@@ -170,6 +242,13 @@ begin
       fExcludeDirs[i] := lList[i];
   end;
 
+  GC(lList, TStringList.Create, g);
+  lList.StrictDelimiter := True;
+  lList.CommaText := lIni.ReadString(cSectionScan, cKeyRepositoryExclusions, '');
+  SetLength(fRepositoryExclusions, lList.Count);
+  for i := 0 to lList.Count - 1 do
+    fRepositoryExclusions[i] := lList[i];
+
   lValue := lIni.ReadString(cSectionHistory, cKeyRepoNameHistory, '');
   if lValue <> '' then
   begin
@@ -180,12 +259,13 @@ begin
     for i := 0 to lList.Count - 1 do
       fRepoNameHistory[i] := lList[i];
   end;
+  LoadFolderSelection(lIni);
 end;
 
 procedure TAppSettings.Save;
 var
   g: TGarbos;
-  lIni: TIniFile;
+  lIni: TMemIniFile;
   lList: TStringList;
   i: Integer;
   lFilePath: string;
@@ -197,15 +277,17 @@ begin
   lFilePath := GetSettingsFilePath;
   lTempPath := lFilePath + '.tmp';
 
-  GC(lIni, TIniFile.Create(lTempPath), g);
+  GC(lIni, TMemIniFile.Create(lTempPath, TEncoding.Unicode), g);
 
   if Length(fScanPaths) > 0 then
     fStartPath := fScanPaths[0];
   lIni.WriteString(cSectionScan, cKeyStartPath, fStartPath);
   lIni.WriteInteger(cSectionScan, cKeyMaxDepth, fMaxDepth);
   lIni.WriteInteger(cSectionScan, cKeyThrottleLimit, fThrottleLimit);
+  lIni.WriteInteger(cSectionScan, cKeyActionThrottleLimit, fActionThrottleLimit);
   lIni.WriteInteger(cSectionScan, cKeyCacheTtlSeconds, fCacheTtlSeconds);
   lIni.WriteString(cSectionScan, cKeyTargetRepoName, fTargetRepoName);
+  lIni.WriteInteger(cSectionScan, cKeyStatusFilterIndex, fStatusFilterIndex);
   lIni.WriteBool(cSectionDebug, cKeyDebugLogEnabled, fDebugLogEnabled);
   lIni.WriteString(cSectionDebug, cKeyDebugLogPath, fDebugLogPath);
 
@@ -222,9 +304,29 @@ begin
   lIni.WriteString(cSectionScan, cKeyExcludeDirs, lList.CommaText);
 
   lList.Clear;
+  for i := 0 to Length(fRepositoryExclusions) - 1 do
+    lList.Add(fRepositoryExclusions[i]);
+  lIni.WriteString(cSectionScan, cKeyRepositoryExclusions, lList.CommaText);
+
+  lList.Clear;
   for i := 0 to Length(fRepoNameHistory) - 1 do
     lList.Add(fRepoNameHistory[i]);
   lIni.WriteString(cSectionHistory, cKeyRepoNameHistory, lList.CommaText);
+
+  lIni.EraseSection(cSectionFolders);
+  lIni.WriteInteger(cSectionFolders, cKeyFolderVersion, 1);
+  lIni.WriteInteger(cSectionFolders, cKeyFolderRuleCount, Length(fFolderSelectionRules));
+  for i := 0 to High(fFolderSelectionRules) do
+  begin
+    lIni.WriteString(cSectionFolders, cKeyFolderPath + IntToStr(i),
+      NormalizeSelectionPath(fFolderSelectionRules[i].Path));
+    lIni.WriteBool(cSectionFolders, cKeyFolderIncluded + IntToStr(i),
+      fFolderSelectionRules[i].Included);
+  end;
+  lList.Clear;
+  lList.AddStrings(fExpandedFolders);
+  lIni.WriteString(cSectionFolders, cKeyExpandedFolders, lList.CommaText);
+  lIni.WriteInteger(cSectionFolders, cKeyFoldersPaneWidth, fFoldersPaneWidth);
 
   try
     lIni.UpdateFile;

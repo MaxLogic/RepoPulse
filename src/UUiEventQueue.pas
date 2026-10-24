@@ -10,7 +10,8 @@ uses
 
 type
   TUiEventKind = (uekLog, uekProgressStart, uekProgressUpdate, uekProgressEnd,
-    uekRepoWaiting, uekRepoResult, uekScanFinished, uekActionResult, uekClearResults);
+    uekRepoWaiting, uekRepoResult, uekScanFinished, uekActionResult, uekClearResults, uekInventoryLoaded,
+    uekDiscoveryFound, uekDiscoveryFinished, uekAnalysisFinished);
 
   TUiEvent = record
     Kind: TUiEventKind;
@@ -20,12 +21,18 @@ type
     ProgressMax: Integer;
     ProgressValue: Integer;
     RepoRoot: string;
+    RepoRoots: TArray<string>;
+    OperationSucceeded: Boolean;
+    OperationCancelled: Boolean;
+    OperationError: string;
     RepoStatus: TRepoStatus;
     RelatedRepoStatus: TRepoStatus;
+    ScanSummary: TScanSummary;
+    HasScanSummary: Boolean;
     ActionTag: Integer;
+    ActionIsBulk: Boolean;
     ActionSucceeded: Boolean;
     ActionError: string;
-    AlertText: string;
   end;
 
   TUiEventHandler = reference to procedure(const aEvent: TUiEvent);

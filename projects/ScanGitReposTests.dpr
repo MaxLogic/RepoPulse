@@ -1,18 +1,26 @@
 program ScanGitReposTests;
 
 {$APPTYPE CONSOLE}
+{$R *.res}
 
 uses
+  FastMM5 in 'F:\projects\3rdParty\FastMM5\FastMM5\FastMM5.pas',
   System.IOUtils, System.SysUtils,
 
   DUnitX.Loggers.Console, DUnitX.Loggers.XML.NUnit, DUnitX.TestFramework,
   TestAppSettings in '..\tests\TestAppSettings.pas',
+  TestBoundedParallel in '..\tests\TestBoundedParallel.pas',
+  TestBulkActionResults in '..\tests\TestBulkActionResults.pas',
   TestGitParsing in '..\tests\TestGitParsing.pas',
+  TestFolderSelection in '..\tests\TestFolderSelection.pas',
+  TestFolderTreeFrame in '..\tests\TestFolderTreeFrame.pas',
   TestIgnoreRules in '..\tests\TestIgnoreRules.pas',
   TestPathUtils in '..\tests\TestPathUtils.pas',
   TestRepoDiscovery in '..\tests\TestRepoDiscovery.pas',
+  TestRepoAccessibility in '..\tests\TestRepoAccessibility.pas',
   TestRepoCache in '..\tests\TestRepoCache.pas',
   TestRepoListModel in '..\tests\TestRepoListModel.pas',
+  TestRepositoryExclusionsDialog in '..\tests\TestRepositoryExclusionsDialog.pas',
   TestRepoPathDisplay in '..\tests\TestRepoPathDisplay.pas',
   TestScanPaths in '..\tests\TestScanPaths.pas',
   TestTortoiseGit in '..\tests\TestTortoiseGit.pas',
@@ -29,8 +37,16 @@ var
   lResultsDir: string;
 
 begin
-  ReportMemoryLeaksOnShutdown := True;
+  // T-052: retain full leak diagnostics without a modal shutdown dialog.
+  ReportMemoryLeaksOnShutdown := False;
+  FastMM_MessageBoxEvents := [];
+  FastMM_LogToFileEvents := FastMM_LogToFileEvents +
+    [mmetUnexpectedMemoryLeakDetail, mmetUnexpectedMemoryLeakSummary];
+  FastMM_SetEventLogFilename(PWideChar(TPath.Combine(GetCurrentDir, 'FastMM5-errors.log')));
   try
+    if FastMM_GetInstallationState <> mmisInstalled then
+      raise Exception.Create('FastMM5 is not the installed test memory manager');
+    Writeln('FastMM5 installed: ', CFastMM_Version);
     lRunner := TDUnitX.CreateRunner;
     lRunner.UseRTTI := True;
 

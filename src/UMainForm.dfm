@@ -1,6 +1,7 @@
 object frmMain: TfrmMain
   Left = 0
   Top = 0
+  CustomHint = BalloonHint
   Caption = 'RepoPulse - Scan Git Repos'
   ClientHeight = 720
   ClientWidth = 1338
@@ -11,6 +12,7 @@ object frmMain: TfrmMain
   Font.Name = 'Segoe UI'
   Font.Style = []
   Position = poScreenCenter
+  ShowHint = True
   OnCreate = FormCreate
   OnDestroy = FormDestroy
   TextHeight = 17
@@ -38,11 +40,11 @@ object frmMain: TfrmMain
       Color = clWhitesmoke
       ParentBackground = False
       TabOrder = 0
-      object pnlRootField: TPanel
+      object pnlFilterField: TPanel
         AlignWithMargins = True
         Left = 3
         Top = 3
-        Width = 398
+        Width = 352
         Height = 46
         Margins.Right = 12
         Align = alLeft
@@ -50,40 +52,52 @@ object frmMain: TfrmMain
         Color = clWhitesmoke
         ParentBackground = False
         TabOrder = 0
-        object edtStartPath: TEdit
+        object cboTargetName: TComboBox
           Left = 0
           Top = 20
-          Width = 340
+          Width = 208
           Height = 25
-          ReadOnly = True
-          ShowHint = True
+          Style = csDropDown
           TabOrder = 0
-          TextHint = 'Configured scan paths'
+          TextHint = 'Filter by Name'
+          OnChange = cboTargetNameChange
         end
-        object lblStartPath: TStaticText
+        object lblTargetName: TStaticText
           Left = 0
           Top = 1
-          Width = 340
+          Width = 352
           Height = 17
           AutoSize = False
-          Caption = 'Scan Paths'
-          TabOrder = 2
-        end
-        object btnBrowseStart: TButton
-          Left = 348
-          Top = 20
-          Width = 36
-          Height = 25
-          Caption = '...'
+          Caption = 'Search &Filter'
+          FocusControl = cboTargetName
           TabOrder = 1
-          OnClick = btnBrowseStartClick
+        end
+        object btnFilterHelp: TBitBtn
+          Left = 212
+          Top = 20
+          Width = 28
+          Height = 25
+          Caption = '?'
+          Hint = 'Show search filter syntax help'
+          ShowHint = True
+          TabOrder = 2
+          OnClick = btnFilterHelpClick
+        end
+        object btnExclusions: TBitBtn
+          Left = 244
+          Top = 20
+          Width = 104
+          Height = 25
+          Caption = '&Exclusions...'
+          TabOrder = 3
+          OnClick = btnExclusionsClick
         end
       end
-      object pnlFilterField: TPanel
+      object pnlStatusFilter: TPanel
         AlignWithMargins = True
-        Left = 416
+        Left = 370
         Top = 3
-        Width = 240
+        Width = 208
         Height = 46
         Margins.Right = 12
         Align = alLeft
@@ -91,41 +105,10 @@ object frmMain: TfrmMain
         Color = clWhitesmoke
         ParentBackground = False
         TabOrder = 1
-        object cboTargetName: TComboBox
-          Left = 0
-          Top = 20
-          Width = 240
-          Height = 25
-          Style = csDropDown
-          TabOrder = 0
-          TextHint = 'Filter by Name'
-        end
-        object lblTargetName: TStaticText
-          Left = 0
-          Top = 1
-          Width = 240
-          Height = 17
-          AutoSize = False
-          Caption = 'Search Filter'
-          TabOrder = 1
-        end
-      end
-      object pnlStatusFilter: TPanel
-        AlignWithMargins = True
-        Left = 671
-        Top = 3
-        Width = 190
-        Height = 46
-        Margins.Right = 12
-        Align = alLeft
-        BevelOuter = bvNone
-        Color = clWhitesmoke
-        ParentBackground = False
-        TabOrder = 2
         object cboStatusFilter: TComboBox
           Left = 0
           Top = 20
-          Width = 181
+          Width = 176
           Height = 25
           Style = csDropDownList
           TabOrder = 0
@@ -134,26 +117,38 @@ object frmMain: TfrmMain
         object lblStatusFilter: TStaticText
           Left = 0
           Top = 1
-          Width = 181
+          Width = 208
           Height = 17
           AutoSize = False
           Caption = 'Status Filter'
+          FocusControl = cboStatusFilter
           TabOrder = 1
+        end
+        object btnStatusFilterHelp: TBitBtn
+          Left = 180
+          Top = 20
+          Width = 28
+          Height = 25
+          Caption = '?'
+          Hint = 'Explain repository status filters'
+          ShowHint = True
+          TabOrder = 2
+          OnClick = btnStatusFilterHelpClick
         end
       end
       object pnlToolbarActions: TPanel
-        Left = 891
+        Left = 676
         Top = 0
-        Width = 415
+        Width = 630
         Height = 52
         Align = alRight
         BevelOuter = bvNone
         Color = clWhitesmoke
         ParentBackground = False
-        TabOrder = 3
-        object btnSettings: TButton
+        TabOrder = 2
+        object btnSettings: TBitBtn
           AlignWithMargins = True
-          Left = 322
+          Left = 537
           Top = 4
           Width = 90
           Height = 44
@@ -163,12 +158,12 @@ object frmMain: TfrmMain
           Caption = 'Settings'
           ImageIndex = 3
           Images = ButtonImages
-          TabOrder = 3
+          TabOrder = 4
           OnClick = btnSettingsClick
         end
-        object btnPushVisible: TButton
+        object btnPushVisible: TBitBtn
           AlignWithMargins = True
-          Left = 230
+          Left = 445
           Top = 4
           Width = 86
           Height = 44
@@ -178,12 +173,12 @@ object frmMain: TfrmMain
           Caption = 'Push all'
           ImageIndex = 2
           Images = ButtonImages
-          TabOrder = 2
+          TabOrder = 3
           OnClick = btnPushVisibleClick
         end
-        object btnPullVisible: TButton
+        object btnPullVisible: TBitBtn
           AlignWithMargins = True
-          Left = 138
+          Left = 353
           Top = 4
           Width = 86
           Height = 44
@@ -193,20 +188,34 @@ object frmMain: TfrmMain
           Caption = 'Pull all'
           ImageIndex = 1
           Images = ButtonImages
-          TabOrder = 1
+          TabOrder = 2
           OnClick = btnPullVisibleClick
         end
-        object btnScan: TButton
+        object btnAnalyzeRepos: TBitBtn
           AlignWithMargins = True
-          Left = 17
+          Left = 207
           Top = 4
-          Width = 110
+          Width = 140
+          Height = 44
+          Margins.Top = 4
+          Margins.Bottom = 4
+          Align = alRight
+          Caption = 'Analyze Repos'
+          Enabled = False
+          TabOrder = 1
+          OnClick = btnAnalyzeReposClick
+        end
+        object btnScan: TBitBtn
+          AlignWithMargins = True
+          Left = 46
+          Top = 4
+          Width = 150
           Height = 44
           Margins.Left = 8
           Margins.Top = 4
           Margins.Bottom = 4
           Align = alRight
-          Caption = 'Scan'
+          Caption = 'Update Repo list'
           ImageIndex = 0
           Images = ButtonImages
           TabOrder = 0
@@ -226,29 +235,34 @@ object frmMain: TfrmMain
     Margins.Right = 12
     Margins.Bottom = 0
     Align = alTop
-    TabOrder = 5
+    TabOrder = 6
     Visible = False
   end
   object ActivityPanel: TPanel
     Left = 0
     Top = 82
     Width = 1338
-    Height = 72
+    Height = 168
     Align = alTop
     BevelOuter = bvNone
     Color = 15986679
-    Padding.Left = 12
-    Padding.Top = 8
-    Padding.Right = 12
-    Padding.Bottom = 8
+    Padding.Left = 16
+    Padding.Top = 16
+    Padding.Right = 16
+    Padding.Bottom = 16
     ParentBackground = False
-    TabOrder = 6
+    TabOrder = 7
     Visible = False
     object ScanAnimation: TSkAnimatedImage
-      Left = 12
-      Top = 8
-      Width = 56
-      Height = 56
+      AlignWithMargins = True
+      Left = 16
+      Top = 16
+      Width = 128
+      Height = 136
+      Margins.Left = 0
+      Margins.Top = 0
+      Margins.Right = 16
+      Margins.Bottom = 0
       Align = alLeft
       Visible = False
       Animation.Enabled = False
@@ -1993,6 +2007,108 @@ object frmMain: TfrmMain
         7B22746D223A37322C22636D223A223220746F2033222C226472223A32347D2C
         7B22746D223A3132302C22636D223A22456E64222C226472223A32347D5D7D}
     end
+    object BulkAnimation: TSkAnimatedImage
+      AlignWithMargins = True
+      Left = 16
+      Top = 16
+      Width = 128
+      Height = 136
+      Margins.Left = 0
+      Margins.Top = 0
+      Margins.Right = 16
+      Margins.Bottom = 0
+      Align = alLeft
+      Visible = False
+      Animation.Enabled = False
+      Animation.StartFromCurrent = True
+      Data = {
+        7B2276223A22352E352E37222C226D657461223A7B2267223A224C6F74746965
+        46696C657320414520302E312E3230222C2261223A22222C226B223A22222C22
+        64223A22222C227463223A22227D2C226672223A33322C226970223A302C226F
+        70223A33332C2277223A3139322C2268223A3139322C226E6D223A227472616E
+        73666572222C22646464223A302C22617373657473223A5B5D2C226C61796572
+        73223A5B7B22646464223A302C22696E64223A312C227479223A342C226E6D22
+        3A224C61796572203130204F75746C696E6573222C227372223A312C226B7322
+        3A7B226F223A7B2261223A312C226B223A5B7B2269223A7B2278223A5B302E36
+        36375D2C2279223A5B315D7D2C226F223A7B2278223A5B302E3333335D2C2279
+        223A5B305D7D2C2274223A382C2273223A5B3130305D7D2C7B2274223A32322C
+        2273223A5B305D7D5D2C226978223A31317D2C2272223A7B2261223A302C226B
+        223A302C226978223A31307D2C2270223A7B2261223A312C226B223A5B7B2269
+        223A7B2278223A302E3636372C2279223A317D2C226F223A7B2278223A302E33
+        33332C2279223A307D2C2274223A382C2273223A5B3130362E3333332C37352E
+        3333342C305D2C22746F223A5B332E3333332C302C305D2C227469223A5B2D33
+        2E3333332C302C305D7D2C7B2274223A32332C2273223A5B3132362E3333332C
+        37352E3333342C305D7D5D2C226978223A327D2C2261223A7B2261223A302C22
+        6B223A5B36312E3939392C33362E3136362C305D2C226978223A317D2C227322
+        3A7B2261223A302C226B223A5B3130302C3130302C3130305D2C226978223A36
+        7D7D2C22616F223A302C22736861706573223A5B7B227479223A226772222C22
+        6974223A5B7B22696E64223A302C227479223A227368222C226978223A312C22
+        6B73223A7B2261223A302C226B223A7B2269223A5B5B302C305D2C5B302C305D
+        2C5B302C305D5D2C226F223A5B5B302C305D2C5B302C305D2C5B302C305D5D2C
+        2276223A5B5B2D33362E3136372C31302E3333335D2C5B33362E3136372C3130
+        2E3333335D2C5B31352E3530312C2D31302E3333335D5D2C2263223A66616C73
+        657D2C226978223A327D2C226E6D223A22506174682031222C226D6E223A2241
+        44424520566563746F72205368617065202D2047726F7570222C226864223A66
+        616C73657D2C7B227479223A227374222C2263223A7B2261223A302C226B223A
+        5B302E3032373435363232373437312C302E3032323830303731323935392C30
+        2E303234323337363739352C315D2C226978223A337D2C226F223A7B2261223A
+        302C226B223A3130302C226978223A347D2C2277223A7B2261223A302C226B22
+        3A31302E3333332C226978223A357D2C226C63223A322C226C6A223A322C2262
+        6D223A302C226E6D223A225374726F6B652031222C226D6E223A224144424520
+        566563746F722047726170686963202D205374726F6B65222C226864223A6661
+        6C73657D2C7B227479223A227472222C2270223A7B2261223A302C226B223A5B
+        36312E3939392C33362E3136365D2C226978223A327D2C2261223A7B2261223A
+        302C226B223A5B302C305D2C226978223A317D2C2273223A7B2261223A302C22
+        6B223A5B3130302C3130305D2C226978223A337D2C2272223A7B2261223A302C
+        226B223A302C226978223A367D2C226F223A7B2261223A302C226B223A313030
+        2C226978223A377D2C22736B223A7B2261223A302C226B223A302C226978223A
+        347D2C227361223A7B2261223A302C226B223A302C226978223A357D2C226E6D
+        223A225472616E73666F726D227D5D2C226E6D223A2247726F75702031222C22
+        6E70223A322C22636978223A322C22626D223A302C226978223A312C226D6E22
+        3A224144424520566563746F722047726F7570222C226864223A66616C73657D
+        5D2C226970223A302C226F70223A33332C227374223A302C22626D223A307D2C
+        7B22646464223A302C22696E64223A322C227479223A342C226E6D223A224C61
+        796572203131204F75746C696E6573222C227372223A312C226B73223A7B226F
+        223A7B2261223A312C226B223A5B7B2269223A7B2278223A5B302E3636375D2C
+        2279223A5B315D7D2C226F223A7B2278223A5B302E3333335D2C2279223A5B30
+        5D7D2C2274223A362C2273223A5B3130305D7D2C7B2274223A32302C2273223A
+        5B305D7D5D2C226978223A31317D2C2272223A7B2261223A302C226B223A302C
+        226978223A31307D2C2270223A7B2261223A312C226B223A5B7B2269223A7B22
+        78223A302E3636372C2279223A317D2C226F223A7B2278223A302E3333332C22
+        79223A307D2C2274223A362C2273223A5B38352E3636362C3131362E3636372C
+        305D2C22746F223A5B2D332E3333332C302C305D2C227469223A5B332E333333
+        2C302C305D7D2C7B2274223A32312C2273223A5B36352E3636362C3131362E36
+        36372C305D7D5D2C226978223A327D2C2261223A7B2261223A302C226B223A5B
+        36312E3939392C33362E3136362C305D2C226978223A317D2C2273223A7B2261
+        223A302C226B223A5B3130302C3130302C3130305D2C226978223A367D7D2C22
+        616F223A302C22736861706573223A5B7B227479223A226772222C226974223A
+        5B7B22696E64223A302C227479223A227368222C226978223A312C226B73223A
+        7B2261223A302C226B223A7B2269223A5B5B302C305D2C5B302C305D2C5B302C
+        305D5D2C226F223A5B5B302C305D2C5B302C305D2C5B302C305D5D2C2276223A
+        5B5B33362E3136372C2D31302E3333335D2C5B2D33362E3136372C2D31302E33
+        33335D2C5B2D31352E3530312C31302E3333335D5D2C2263223A66616C73657D
+        2C226978223A327D2C226E6D223A22506174682031222C226D6E223A22414442
+        4520566563746F72205368617065202D2047726F7570222C226864223A66616C
+        73657D2C7B227479223A227374222C2263223A7B2261223A302C226B223A5B30
+        2E3032373435363232373437312C302E3032323830303731323935392C302E30
+        3234323337363739352C315D2C226978223A337D2C226F223A7B2261223A302C
+        226B223A3130302C226978223A347D2C2277223A7B2261223A302C226B223A31
+        302E3333332C226978223A357D2C226C63223A322C226C6A223A322C22626D22
+        3A302C226E6D223A225374726F6B652031222C226D6E223A2241444245205665
+        63746F722047726170686963202D205374726F6B65222C226864223A66616C73
+        657D2C7B227479223A227472222C2270223A7B2261223A302C226B223A5B3631
+        2E3939392C33362E3136365D2C226978223A327D2C2261223A7B2261223A302C
+        226B223A5B302C305D2C226978223A317D2C2273223A7B2261223A302C226B22
+        3A5B3130302C3130305D2C226978223A337D2C2272223A7B2261223A302C226B
+        223A302C226978223A367D2C226F223A7B2261223A302C226B223A3130302C22
+        6978223A377D2C22736B223A7B2261223A302C226B223A302C226978223A347D
+        2C227361223A7B2261223A302C226B223A302C226978223A357D2C226E6D223A
+        225472616E73666F726D227D5D2C226E6D223A2247726F75702031222C226E70
+        223A322C22636978223A322C22626D223A302C226978223A312C226D6E223A22
+        4144424520566563746F722047726F7570222C226864223A66616C73657D5D2C
+        226970223A302C226F70223A33332C227374223A302C22626D223A307D5D2C22
+        6D61726B657273223A5B5D7D}
+    end
     object lblScanActivity: TStaticText
       AlignWithMargins = True
       Left = 80
@@ -2025,7 +2141,7 @@ object frmMain: TfrmMain
     BevelOuter = bvNone
     Color = clWindow
     ParentBackground = False
-    TabOrder = 2
+    TabOrder = 3
     Visible = False
     object memLog: TMemo
       Left = 0
@@ -2045,21 +2161,21 @@ object frmMain: TfrmMain
     Top = 672
     Width = 1314
     Height = 36
-    Margins.Left = 12
+    Margins.Left = 0
     Margins.Top = 8
     Margins.Right = 12
-    Margins.Bottom = 12
+    Margins.Bottom = 0
     Align = alBottom
     BevelOuter = bvNone
     Color = clWhitesmoke
-    Padding.Left = 8
+    Padding.Left = 0
     Padding.Top = 4
     Padding.Right = 8
-    Padding.Bottom = 4
+    Padding.Bottom = 0
     ParentBackground = False
-    TabOrder = 3
+    TabOrder = 4
     OnDblClick = pnlStatusDblClick
-    object btnShowLog: TButton
+    object btnShowLog: TBitBtn
       AlignWithMargins = True
       Left = 1216
       Top = 4
@@ -2080,7 +2196,7 @@ object frmMain: TfrmMain
       Top = 4
       Width = 1192
       Height = 28
-      Margins.Left = 4
+      Margins.Left = 0
       Margins.Top = 0
       Margins.Right = 4
       Margins.Bottom = 0
@@ -2089,6 +2205,23 @@ object frmMain: TfrmMain
       SimplePanel = True
       SimpleText = 'Ready'
       OnDblClick = pnlStatusDblClick
+    end
+    object btnClearFilters: TBitBtn
+      AlignWithMargins = True
+      Left = 1092
+      Top = 4
+      Width = 112
+      Height = 28
+      Margins.Left = 8
+      Margins.Top = 0
+      Margins.Right = 4
+      Margins.Bottom = 0
+      Align = alRight
+      Caption = 'Clear fil&ters'
+      Hint = 'Clear search, status and repository exclusions; keep folder selections.'
+      ShowHint = True
+      TabOrder = 1
+      OnClick = btnClearFiltersClick
     end
   end
   object pnlSettingsDrawer: TPanel
@@ -2104,7 +2237,7 @@ object frmMain: TfrmMain
     Padding.Right = 16
     Padding.Bottom = 16
     ParentBackground = False
-    TabOrder = 4
+    TabOrder = 5
     Visible = False
     object lblSettingsHeader: TStaticText
       AlignWithMargins = True
@@ -2152,9 +2285,8 @@ object frmMain: TfrmMain
         object edtMaxDepth: TEdit
           Left = 0
           Top = 24
-          Width = 322
+          Width = 96
           Height = 25
-          Anchors = [akLeft, akTop, akRight]
           TabOrder = 0
         end
         object lblMaxDepth: TStaticText
@@ -2165,6 +2297,16 @@ object frmMain: TfrmMain
           AutoSize = False
           Caption = 'Max depth'
           TabOrder = 1
+        end
+        object btnBrowseStart: TBitBtn
+          Left = 104
+          Top = 24
+          Width = 218
+          Height = 25
+          Anchors = [akLeft, akTop, akRight]
+          Caption = 'Traversal &options...'
+          TabOrder = 2
+          OnClick = btnBrowseStartClick
         end
       end
       object pnlThrottleField: TPanel
@@ -2196,11 +2338,12 @@ object frmMain: TfrmMain
           Width = 322
           Height = 17
           AutoSize = False
-          Caption = 'Parallel Processing Limit'
+          Caption = 'Scan &threads'
+          FocusControl = edtThrottle
           TabOrder = 1
         end
       end
-      object pnlCacheField: TPanel
+      object pnlActionThrottleField: TPanel
         AlignWithMargins = True
         Left = 3
         Top = 145
@@ -2212,6 +2355,40 @@ object frmMain: TfrmMain
         Color = clWindow
         ParentBackground = False
         TabOrder = 2
+        DesignSize = (
+          322
+          60)
+        object edtActionThrottle: TEdit
+          Left = 0
+          Top = 24
+          Width = 322
+          Height = 25
+          Anchors = [akLeft, akTop, akRight]
+          TabOrder = 0
+        end
+        object lblActionThrottle: TStaticText
+          Left = 0
+          Top = 5
+          Width = 322
+          Height = 17
+          AutoSize = False
+          Caption = 'Pull/Push t&hreads'
+          FocusControl = edtActionThrottle
+          TabOrder = 1
+        end
+      end
+      object pnlCacheField: TPanel
+        AlignWithMargins = True
+        Left = 3
+        Top = 216
+        Width = 322
+        Height = 60
+        Margins.Bottom = 8
+        Align = alTop
+        BevelOuter = bvNone
+        Color = clWindow
+        ParentBackground = False
+        TabOrder = 3
         DesignSize = (
           322
           60)
@@ -2233,41 +2410,10 @@ object frmMain: TfrmMain
           TabOrder = 1
         end
       end
-      object pnlIgnoreDirs: TPanel
-        AlignWithMargins = True
-        Left = 3
-        Top = 216
-        Width = 322
-        Height = 54
-        Margins.Bottom = 8
-        Align = alTop
-        BevelOuter = bvNone
-        Color = clWindow
-        ParentBackground = False
-        TabOrder = 3
-        object lblIgnoreDirs: TStaticText
-          Left = 0
-          Top = 0
-          Width = 322
-          Height = 17
-          AutoSize = False
-          Caption = 'Ignore directory rules'
-          TabOrder = 1
-        end
-        object btnEditIgnoreDirs: TButton
-          Left = 0
-          Top = 24
-          Width = 150
-          Height = 28
-          Caption = 'Edit ignore rules'
-          TabOrder = 0
-          OnClick = btnEditIgnoreDirsClick
-        end
-      end
       object chkDebugLog: TCheckBox
         AlignWithMargins = True
         Left = 3
-        Top = 281
+        Top = 352
         Width = 322
         Height = 21
         Margins.Bottom = 8
@@ -2278,7 +2424,7 @@ object frmMain: TfrmMain
       object pnlDebugPathField: TPanel
         AlignWithMargins = True
         Left = 3
-        Top = 313
+        Top = 384
         Width = 322
         Height = 60
         Margins.Bottom = 8
@@ -2310,10 +2456,28 @@ object frmMain: TfrmMain
       end
     end
   end
-  object RepoTree: TVirtualStringTree
+  inline FolderPane: TFolderTreeFrame
     Left = 0
     Top = 154
-    Width = 978
+    Width = 260
+    Height = 330
+    Align = alLeft
+    Constraints.MinWidth = 160
+    TabOrder = 1
+  end
+  object FolderSplitter: TSplitter
+    Left = 260
+    Top = 154
+    Width = 6
+    Height = 330
+    AutoSnap = False
+    MinSize = 160
+    ResizeStyle = rsUpdate
+  end
+  object RepoTree: TVirtualStringTree
+    Left = 266
+    Top = 154
+    Width = 712
     Height = 330
     AccessibleName = 'Repositories'
     Align = alClient
@@ -2329,14 +2493,17 @@ object frmMain: TfrmMain
     ParentShowHint = False
     PopupMenu = pmRepoActions
     ShowHint = True
-    TabOrder = 1
+    TabOrder = 2
     TreeOptions.AutoOptions = [toAutoDropExpand, toAutoTristateTracking, toAutoScrollOnExpand, toAutoDeleteMovedNodes, toAutoSort, toAutoHideButtons]
     TreeOptions.MiscOptions = [toFullRepaintOnResize, toInitOnSave, toToggleOnDblClick, toWheelPanning]
     TreeOptions.PaintOptions = [toHideFocusRect, toShowDropmark, toThemeAware]
     TreeOptions.SelectionOptions = [toFullRowSelect]
     OnAfterCellPaint = RepoTreeAfterCellPaint
     OnGetText = RepoTreeGetText
+    OnKeyDown = RepoTreeKeyDown
     OnMouseDown = RepoTreeMouseDown
+    OnMouseLeave = RepoTreeMouseLeave
+    OnMouseMove = RepoTreeMouseMove
     OnMouseUp = RepoTreeMouseUp
     OnPaintText = RepoTreePaintText
     Columns = <
@@ -2453,8 +2620,31 @@ object frmMain: TfrmMain
       Caption = 'Fetch'
       OnClick = RepoMenuClick
     end
+    object miRepoPull: TMenuItem
+      Caption = 'Pull'
+      OnClick = RepoMenuClick
+    end
+    object miRepoPush: TMenuItem
+      Caption = 'Push'
+      OnClick = RepoMenuClick
+    end
     object miRepoFixSubmoduleMain: TMenuItem
       Caption = 'Fix submodule to remote main'
+      OnClick = RepoMenuClick
+    end
+    object miRepoLastPullError: TMenuItem
+      Caption = 'Show last &Pull error...'
+      Visible = False
+      OnClick = RepoMenuClick
+    end
+    object miRepoLastPushError: TMenuItem
+      Caption = 'Show last P&ush error...'
+      Visible = False
+      OnClick = RepoMenuClick
+    end
+    object miRepoLastScanError: TMenuItem
+      Caption = 'Show last &Scan error...'
+      Visible = False
       OnClick = RepoMenuClick
     end
     object miRepoSeparator: TMenuItem
@@ -2468,8 +2658,12 @@ object frmMain: TfrmMain
       Caption = 'TortoiseGit &Sync...'
       OnClick = RepoMenuClick
     end
+    object miRepoTortoiseLog: TMenuItem
+      Caption = 'TortoiseGit &Log...'
+      OnClick = RepoMenuClick
+    end
     object miRepoRescan: TMenuItem
-      Caption = '&Rescan'
+      Caption = 'Analyze this repo'
       OnClick = RepoMenuClick
     end
     object miRepoOpenSeparator: TMenuItem
@@ -2479,5 +2673,9 @@ object frmMain: TfrmMain
       Caption = 'Open folder'
       OnClick = RepoMenuClick
     end
+  end
+  object BalloonHint: TBalloonHint
+    Left = 984
+    Top = 16
   end
 end

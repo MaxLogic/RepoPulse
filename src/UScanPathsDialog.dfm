@@ -3,7 +3,7 @@ object frmScanPathsDialog: TfrmScanPathsDialog
   Top = 0
   Caption = 'Edit Scan Paths'
   BorderStyle = bsDialog
-  ClientHeight = 400
+  ClientHeight = 540
   ClientWidth = 680
   Color = clWindow
   Font.Charset = DEFAULT_CHARSET
@@ -18,35 +18,81 @@ object frmScanPathsDialog: TfrmScanPathsDialog
   Padding.Bottom = 16
   Position = poOwnerFormCenter
   TextHeight = 17
-  object memPaths: TMemo
-    AlignWithMargins = True
-    Left = 16
-    Top = 44
-    Width = 648
-    Height = 298
-    Margins.Left = 0
-    Margins.Top = 8
-    Margins.Right = 0
-    Margins.Bottom = 8
-    Align = alClient
-    ScrollBars = ssBoth
-    TabOrder = 0
-    WordWrap = False
-  end
-  object lblInstructions: TStaticText
+  object pnlScanPaths: TPanel
     Left = 16
     Top = 16
     Width = 648
-    Height = 20
+    Height = 226
     Align = alTop
-    AutoSize = False
-    Caption = '&Scan paths (one existing folder per line)'
-    FocusControl = memPaths
+    BevelOuter = bvNone
+    ParentBackground = False
+    TabOrder = 0
+    object memPaths: TMemo
+      AlignWithMargins = True
+      Left = 0
+      Top = 28
+      Width = 648
+      Height = 190
+      Margins.Left = 0
+      Margins.Top = 8
+      Margins.Right = 0
+      Margins.Bottom = 8
+      Align = alClient
+      ScrollBars = ssBoth
+      TabOrder = 0
+      WordWrap = False
+    end
+    object lblInstructions: TStaticText
+      Left = 0
+      Top = 0
+      Width = 648
+      Height = 20
+      Align = alTop
+      AutoSize = False
+      Caption = '&Scan paths (one existing folder per line)'
+      FocusControl = memPaths
+      TabOrder = 1
+    end
+  end
+  object pnlIgnorePaths: TPanel
+    Left = 16
+    Top = 242
+    Width = 648
+    Height = 240
+    Align = alClient
+    BevelOuter = bvNone
+    ParentBackground = False
     TabOrder = 1
+    object memIgnorePaths: TMemo
+      AlignWithMargins = True
+      Left = 0
+      Top = 28
+      Width = 648
+      Height = 204
+      Margins.Left = 0
+      Margins.Top = 8
+      Margins.Right = 0
+      Margins.Bottom = 8
+      Align = alClient
+      ScrollBars = ssBoth
+      TabOrder = 0
+      WordWrap = False
+    end
+    object lblIgnorePaths: TStaticText
+      Left = 0
+      Top = 0
+      Width = 648
+      Height = 20
+      Align = alTop
+      AutoSize = False
+      Caption = '&Ignored paths and rules (one per line; # starts a comment)'
+      FocusControl = memIgnorePaths
+      TabOrder = 1
+    end
   end
   object pnlActions: TPanel
     Left = 16
-    Top = 350
+    Top = 490
     Width = 648
     Height = 34
     Align = alBottom
@@ -56,7 +102,7 @@ object frmScanPathsDialog: TfrmScanPathsDialog
     DesignSize = (
       648
       34)
-    object btnAddFolder: TButton
+    object btnAddFolder: TBitBtn
       Left = 0
       Top = 3
       Width = 110
@@ -65,7 +111,7 @@ object frmScanPathsDialog: TfrmScanPathsDialog
       TabOrder = 0
       OnClick = btnAddFolderClick
     end
-    object btnCancel: TButton
+    object btnCancel: TBitBtn
       Left = 456
       Top = 3
       Width = 90
@@ -76,7 +122,7 @@ object frmScanPathsDialog: TfrmScanPathsDialog
       ModalResult = 2
       TabOrder = 1
     end
-    object btnOk: TButton
+    object btnOk: TBitBtn
       Left = 558
       Top = 3
       Width = 90

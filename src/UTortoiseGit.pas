@@ -9,7 +9,7 @@ uses
 
 type
   {$SCOPEDENUMS ON}
-  TTortoiseGitCommand = (tgcCommit, tgcSync);
+  TTortoiseGitCommand = (tgcCommit, tgcSync, tgcLog);
 
   TTortoiseGit = class sealed
   private
@@ -87,6 +87,7 @@ begin
   case aCommand of
     TTortoiseGitCommand.tgcCommit: lCommandName := 'commit';
     TTortoiseGitCommand.tgcSync: lCommandName := 'sync';
+    TTortoiseGitCommand.tgcLog: lCommandName := 'log';
   else
     lCommandName := '';
   end;

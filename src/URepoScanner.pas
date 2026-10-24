@@ -1,15 +1,42 @@
-unit URepoScanner;
+﻿unit URepoScanner;
 
 interface
 
 uses
   System.Classes, System.DateUtils, System.diagnostics, System.generics.collections, System.IOUtils,
-  System.Masks, System.SyncObjs, System.SysUtils, System.Threading, System.Types,
+  System.SyncObjs, System.SysUtils, System.Threading,
+
+  Winapi.Windows,
 
   AutoFree, CancelToken, maxLogic.Logger, maxLogic.IOUtils, maxLogic.StrUtils,
-  UAppSettings, UGitClient, UModels, UPathRules, URepoCache, UUiEventQueue;
+  UAppSettings, UFolderSelection, UGitClient, UModels, UPathRules, URepoCache, UUiEventQueue;
 
 type
+  TRepoDiscoveryRequest = record
+    Roots: TArray<string>;
+    Rules: TArray<TFolderSelectionRule>;
+    UsePathSelection: Boolean;
+    MaxDepth: Integer;
+    IgnorePatterns: TArray<TIgnorePattern>;
+    CacheTtlSeconds: Integer;
+    DebugLogEnabled: Boolean;
+  end;
+
+  TRepoAnalysisRequest = record
+    RepoRoots: TArray<string>;
+    CacheTtlSeconds: Integer;
+    ThrottleLimit: Integer;
+    DebugLogEnabled: Boolean;
+  end;
+
+  TRepoOperationResult = record
+    Summary: TScanSummary;
+    Succeeded: Boolean;
+    Cancelled: Boolean;
+    Error: string;
+    RepoRoots: TArray<string>;
+  end;
+
   TRepoFetchPlan = record
     NeedsFetch: Boolean;
     CacheHit: Boolean;
@@ -21,24 +48,20 @@ type
   TRepoScanner = class
   private
     fGit: TGitClient;
-    fQueue: TUiEventQueue;
+    fCache: TRepoCache;
+    fCachePath: string;
+    fOwnsCache: Boolean;
     fCancelToken: iCancelToken;
     fDebugEnabled: Boolean;
     fLogger: iMaxLog;
-    fCacheLock: TCriticalSection;
-    procedure LogLine(const aText: string; const aLogType: TLogType = TLogType.Info);
     procedure LogDebug(const aText: string);
-    procedure PublishScanFinished(const aText: string);
+    procedure StoreAnalysisResult(const aCache: TRepoCache; var aStatus: TRepoStatus);
     function IsCancelled: boolean;
-    function ResolveIgnorePath(const aSettingsFolder: string; const aExeFolder: string): string;
+    function OperationCachePath: string;
   protected
     fGeneration: Int64;
-    function NewUiEvent(const aKind: TUiEventKind): TUiEvent;
-    function FindRepoCandidates(const aRoots: TArray<string>; const aFilterPattern: string;
-      const aDepthLimit: Integer; const aIgnorePatterns: TArray<TIgnorePattern>;
-      out aSkippedDueToCap: Boolean; const aQueue: TUiEventQueue = nil): TArray<string>;
-    function PublishCachedInventory(const aCache: TRepoCache; const aFingerprint: string;
-      const aQueue: TUiEventQueue): Integer;
+    function NewUiEvent(const aKind: TUiEventKind): TUiEvent; virtual;
+    function DiscoveryCandidateLimit: Integer; virtual;
     function BuildRepoStatus(const aRepoRoot: string; const aMatched: TArray<string>;
       const aCache: TRepoCache; const aTtlSeconds: integer; out aStatus: TRepoStatus): boolean;
     function BuildLocalRepoStatus(const aRepoRoot: string; const aMatched: TArray<string>;
@@ -52,15 +75,18 @@ type
       out aStatus: TRepoStatus): Boolean; overload;
     function CheckRepoStatusLocalFirst(const aRepoRoot: string; const aMatched: TArray<string>;
       const aCache: TRepoCache; const aTtlSeconds: Integer; const aQueue: TUiEventQueue;
-      out aStatus: TRepoStatus; out aFetchSkippedByCache, aFetchAttempted: Boolean): Boolean; overload;
+      out aStatus: TRepoStatus; out aFetchSkippedByCache, aFetchAttempted: Boolean): Boolean; overload; virtual;
   public
-    constructor Create(const aGit: TGitClient);
+    constructor Create(const aGit: TGitClient; const aCache: TRepoCache = nil;
+      const aCachePath: string = '');
+    destructor Destroy; override;
+    property Cache: TRepoCache read fCache;
+    function DiscoverRepositories(const aRequest: TRepoDiscoveryRequest; const aQueue: TUiEventQueue;
+      const aCancelToken: iCancelToken; const aGeneration: Int64): TRepoOperationResult;
+    function AnalyzeRepositories(const aRequest: TRepoAnalysisRequest; const aQueue: TUiEventQueue;
+      const aCancelToken: iCancelToken; const aGeneration: Int64): TRepoOperationResult;
     function TryRefreshRepoStatus(const aSettings: TAppSettings; const aRepoRoot: string;
       const aMatched: TArray<string>; out aStatus: TRepoStatus; out aError: string): Boolean;
-    function ExecuteScan(const aSettings: TAppSettings; const aQueue: TUiEventQueue;
-      const aCancelToken: iCancelToken): TScanSummary; overload;
-    function ExecuteScan(const aSettings: TAppSettings; const aQueue: TUiEventQueue;
-      const aCancelToken: iCancelToken; const aGeneration: Int64): TScanSummary; overload;
   end;
 
 implementation
@@ -68,29 +94,13 @@ implementation
 const
   cMaxGitProbeCandidates = 10000;
   cFetchTimeoutMs = 60000;
-
-  cLogPhase1 = 'Phase 1: finding candidate folders';
-  cLogPhase3 = 'Phase 3: checking repo status';
-  cLogPhase3Repo = 'Phase 3: repo ';
-  cLogSummary = 'Summary';
-
-  cLogCacheLoadFailed = 'Cache load failed: ';
   cLogCacheSaveFailed = 'Cache save failed: ';
-  cLogCacheSaved = 'Cache saved.';
-  cLogCachedInventory = 'Cached repository inventory: %d valid rows';
-  cLogIgnoreLoaded = 'Ignore patterns loaded: ';
-  cLogIgnoreFile = 'Ignore file: ';
-  cLogCandidates = 'Candidates: ';
-  cLogRepoRoots = 'Unique repo roots: ';
   cLogCapHit = 'Hit MaxGitProbeCandidates cap; scan truncated.';
-  cLogPhase1Progress = 'Phase 1 progress: %d dirs, %d candidates';
-  cLogPhase3Progress = 'Phase 3 progress: %d/%d repos';
-  cLogPhaseComplete = '%s completed in %d ms';
-  cLogFetchCache = 'Fetch cache: %d fresh skips, %d refreshes';
-  cLogQueuePeak = 'UI queue peak: %d events';
 
 resourcestring
   rsFetchSkippedNotWritable = 'skipped fetch (git dir not writable)';
+  rsGitStatusFailed = 'Git status could not be read.';
+  rsNotGitWorkTree = 'The repository is not a Git work tree.';
 
 type
   TDirItem = record
@@ -98,59 +108,77 @@ type
     Depth: integer;
   end;
 
-  TRepoTask = record
-    RepoRoot: string;
-    Matched: TArray<string>;
-  end;
-
-constructor TRepoScanner.Create(const aGit: TGitClient);
+constructor TRepoScanner.Create(const aGit: TGitClient; const aCache: TRepoCache;
+  const aCachePath: string);
 begin
   inherited Create;
   fGit := aGit;
+  fCache := aCache;
+  fOwnsCache := fCache = nil;
+  if fOwnsCache then
+    fCache := TRepoCache.Create;
+  fCachePath := aCachePath;
+end;
+
+destructor TRepoScanner.Destroy;
+begin
+  if fOwnsCache then
+    fCache.Free;
+  inherited;
 end;
 
 function TRepoScanner.TryRefreshRepoStatus(const aSettings: TAppSettings; const aRepoRoot: string;
   const aMatched: TArray<string>; out aStatus: TRepoStatus; out aError: string): Boolean;
 var
-  g: TGarbos;
   lCache: TRepoCache;
   lCacheErr: string;
   lSettingsFolder: string;
   lCachePath: string;
 begin
+  aStatus := Default(TRepoStatus);
+  aStatus.RepoRoot := aRepoRoot;
+  aStatus.MatchedFolders := aMatched;
   aError := '';
   Result := False;
 
-  fQueue := nil;
   fCancelToken := nil;
   fDebugEnabled := aSettings.DebugLogEnabled;
   fLogger := maxLog.CloneWithTag('RepoScanner');
-  fCacheLock := nil;
   try
     lSettingsFolder := TAppSettings.GetSettingsFolder;
     if not DirectoryExists(lSettingsFolder) then
       ForceDirectories(lSettingsFolder);
 
-    lCachePath := CombinePath([lSettingsFolder, 'repo-scan-cache.json']);
-    GC(lCache, TRepoCache.Create, g);
-    if not lCache.LoadFromFile(lCachePath, lCacheErr) then
+    lCachePath := fCachePath;
+    if lCachePath = '' then
+      lCachePath := CombinePath([lSettingsFolder, 'repo-scan-cache.json']);
+    lCache := fCache;
+    if not lCache.EnsureLoaded(lCachePath, lCacheErr) then
       aError := lCacheErr;
 
     if not BuildRepoStatus(aRepoRoot, aMatched, lCache, aSettings.CacheTtlSeconds, aStatus) then
     begin
+      if aStatus.ScanError <> '' then
+        aError := aStatus.ScanError;
       if aError = '' then
-        aError := 'refresh failed';
+        aError := rsGitStatusFailed;
+      lCache.StoreStatus(aStatus, '');
+      lCache.TryGetStatus(aRepoRoot, aStatus);
+      if not lCache.SaveToFile(lCachePath, aSettings.CacheTtlSeconds, lCacheErr) then
+        aError := aError + sLineBreak + lCacheErr;
       Exit(False);
     end;
 
+    aStatus.LastAnalyzedUtc := DateToISO8601(TTimeZone.Local.ToUniversalTime(Now), True);
+    aStatus.IsCached := False;
+    lCache.StoreStatus(aStatus, aStatus.LastAnalyzedUtc);
     if aStatus.CacheUpdate.Key <> '' then
-    begin
       lCache.ApplyUpdate(aStatus.CacheUpdate);
-      if not lCache.SaveToFile(lCachePath, aSettings.CacheTtlSeconds, lCacheErr) then
-      begin
-        if aError = '' then
-          aError := lCacheErr;
-      end;
+    if not lCache.SaveToFile(lCachePath, aSettings.CacheTtlSeconds, lCacheErr) then
+    begin
+      if aError <> '' then
+        aError := aError + sLineBreak;
+      aError := aError + cLogCacheSaveFailed + lCacheErr;
     end;
 
     Result := True;
@@ -176,219 +204,11 @@ begin
   Result.Generation := fGeneration;
 end;
 
-function TRepoScanner.PublishCachedInventory(const aCache: TRepoCache; const aFingerprint: string;
-  const aQueue: TUiEventQueue): Integer;
-var
-  lEvent: TUiEvent;
-  lRepoRoot: string;
-begin
-  Result := 0;
-  for lRepoRoot in aCache.GetValidInventory(aFingerprint) do
-  begin
-    lEvent := NewUiEvent(TUiEventKind.uekRepoWaiting);
-    lEvent.RepoRoot := lRepoRoot;
-    aQueue.Enqueue(lEvent);
-    Inc(Result);
-  end;
-end;
-
-procedure TRepoScanner.LogLine(const aText: string; const aLogType: TLogType = TLogType.Info);
-var
-  lEvent: TUiEvent;
-begin
-  if fLogger <> nil then
-  begin
-    case aLogType of
-      TLogType.Debug: fLogger.Debug(aText);
-      TLogType.Warning: fLogger.Warn(aText);
-      TLogType.Error: fLogger.Error(aText);
-    else
-      fLogger.Info(aText);
-    end;
-  end;
-  lEvent := NewUiEvent(TUiEventKind.uekLog);
-  lEvent.Text := aText;
-  fQueue.Enqueue(lEvent);
-end;
-
-procedure TRepoScanner.PublishScanFinished(const aText: string);
-var
-  lEvent: TUiEvent;
-begin
-  if fLogger <> nil then
-  begin
-    fLogger.Info(aText);
-  end;
-
-  lEvent := NewUiEvent(TUiEventKind.uekProgressEnd);
-  fQueue.Enqueue(lEvent);
-
-  lEvent := NewUiEvent(TUiEventKind.uekScanFinished);
-  lEvent.Text := aText;
-  fQueue.Enqueue(lEvent);
-end;
-
 function TRepoScanner.IsCancelled: boolean;
 begin
   if fCancelToken = nil then
     exit(False);
   Result := fCancelToken.Canceled;
-end;
-
-function TRepoScanner.ResolveIgnorePath(const aSettingsFolder: string; const aExeFolder: string): string;
-var
-  lSettingsIgnore: string;
-  lExeIgnore: string;
-begin
-  lSettingsIgnore := CombinePath([aSettingsFolder, '.ignoredirectory']);
-  lExeIgnore := CombinePath([aExeFolder, '.ignoredirectory']);
-
-  if FileExists(lSettingsIgnore) then
-    exit(lSettingsIgnore);
-  if FileExists(lExeIgnore) then
-    exit(lExeIgnore);
-
-  Result := lSettingsIgnore;
-end;
-
-function TRepoScanner.FindRepoCandidates(const aRoots: TArray<string>; const aFilterPattern: string;
-  const aDepthLimit: Integer; const aIgnorePatterns: TArray<TIgnorePattern>;
-  out aSkippedDueToCap: Boolean; const aQueue: TUiEventQueue): TArray<string>;
-var
-  g: TGarbos;
-  lQueue: TQueue<TDirItem>;
-  lCandidates: TList<string>;
-  lCandidateSet: TDictionary<string, Boolean>;
-  lRoot: string;
-  lRootFull: string;
-  lRootNorm: string;
-  lItem: TDirItem;
-  lChild: TDirItem;
-  lDirs: TStringDynArray;
-  lDir: string;
-  lName: string;
-  lRelative: string;
-  lPattern: string;
-  lVisited: Integer;
-  lSw: TStopWatch;
-  lLastUiMs: Int64;
-  lLastDebugMs: Int64;
-  lEvent: TUiEvent;
-begin
-  aSkippedDueToCap := False;
-  Result := [];
-  if aDepthLimit < 0 then
-    Exit;
-
-  lPattern := Trim(aFilterPattern).ToLowerInvariant;
-  if lPattern = '' then
-    lPattern := '*';
-
-  GC(lQueue, TQueue<TDirItem>.Create, g);
-  GC(lCandidates, TList<string>.Create, g);
-  GC(lCandidateSet, TDictionary<string, Boolean>.Create(TFastCaseAwareComparer.OrdinalIgnoreCase), g);
-  lVisited := 0;
-  lSw := TStopWatch.StartNew;
-  lLastUiMs := 0;
-  lLastDebugMs := 0;
-
-  for lRoot in aRoots do
-  begin
-    if IsCancelled then
-      Break;
-    if Trim(lRoot) = '' then
-      Continue;
-    try
-      lRootFull := TPath.GetFullPath(lRoot);
-    except
-      Continue;
-    end;
-    if not TDirectory.Exists(lRootFull) then
-      Continue;
-
-    lRootNorm := NormalizePathForMatch(lRootFull);
-    if ShouldIgnoreDirectory(lRootFull, lRootNorm, aIgnorePatterns) then
-      Continue;
-
-    lQueue.Clear;
-    lItem.Path := lRootFull;
-    lItem.Depth := 0;
-    lQueue.Enqueue(lItem);
-
-    while lQueue.Count > 0 do
-    begin
-      if IsCancelled then
-        Break;
-      lItem := lQueue.Dequeue;
-      Inc(lVisited);
-
-      if ShouldIgnoreDirectory(lItem.Path, lRootNorm, aIgnorePatterns) then
-        Continue;
-
-      if DirectoryExists(TPath.Combine(lItem.Path, '.git')) or
-        FileExists(TPath.Combine(lItem.Path, '.git')) then
-      begin
-        lName := ExtractFileName(ExcludeTrailingPathDelimiter(lItem.Path)).ToLowerInvariant;
-        lRelative := GetRelativeForMatch(NormalizePathForMatch(lItem.Path), lRootNorm);
-        if MatchesMask(lName, lPattern) or MatchesMask(lRelative, lPattern) then
-        begin
-          if not lCandidateSet.ContainsKey(lItem.Path) then
-          begin
-            lCandidateSet.Add(lItem.Path, True);
-            lCandidates.Add(lItem.Path);
-            if aQueue <> nil then
-            begin
-              lEvent := NewUiEvent(TUiEventKind.uekRepoWaiting);
-              lEvent.RepoRoot := lItem.Path;
-              aQueue.Enqueue(lEvent);
-            end;
-            if lCandidates.Count >= cMaxGitProbeCandidates then
-            begin
-              aSkippedDueToCap := True;
-              Break;
-            end;
-          end;
-        end;
-      end;
-
-      if lItem.Depth >= aDepthLimit then
-        Continue;
-      try
-        lDirs := TDirectory.GetDirectories(lItem.Path, '*', TSearchOption.soTopDirectoryOnly);
-      except
-        Continue;
-      end;
-
-      for lDir in lDirs do
-      begin
-        if IsCancelled then
-          Break;
-        if SameText(ExtractFileName(lDir), '.git') then
-          Continue;
-        if ShouldIgnoreDirectory(lDir, lRootNorm, aIgnorePatterns) then
-          Continue;
-        lChild.Path := lDir;
-        lChild.Depth := lItem.Depth + 1;
-        lQueue.Enqueue(lChild);
-      end;
-
-      if (lVisited mod 250 = 0) and (lSw.ElapsedMilliseconds - lLastDebugMs >= 1000) then
-      begin
-        LogDebug(Format(cLogPhase1Progress, [lVisited, lCandidates.Count]));
-        lLastDebugMs := lSw.ElapsedMilliseconds;
-      end;
-      if (fQueue <> nil) and (lSw.ElapsedMilliseconds - lLastUiMs >= 5000) then
-      begin
-        LogLine(Format(cLogPhase1Progress, [lVisited, lCandidates.Count]));
-        lLastUiMs := lSw.ElapsedMilliseconds;
-      end;
-    end;
-
-    if aSkippedDueToCap then
-      Break;
-  end;
-
-  Result := lCandidates.ToArray;
 end;
 
 function TRepoScanner.BuildLocalRepoStatus(const aRepoRoot: string; const aMatched: TArray<string>;
@@ -407,6 +227,7 @@ var
   lCanCompare: boolean;
   lAhead: integer;
   lBehind: integer;
+  lUnrelatedHistory: Boolean;
   lStatusLines: TArray<string>;
   lParse: TGitStatusParse;
   lDiag: TGitWriteDiagnostics;
@@ -426,8 +247,12 @@ var
   lCanFastForwardToMain: Boolean;
   lShouldCheckMainFastForward: Boolean;
   lFfRes: TGitResult;
+  lMergeBaseRes: TGitResult;
 begin
   aStatus := default(TRepoStatus);
+  aStatus.RepoRoot := aRepoRoot;
+  aStatus.MatchedFolders := aMatched;
+  aStatus.Branch := rsBranchUnknown;
   aFetchPlan := Default(TRepoFetchPlan);
 
   if IsCancelled then
@@ -436,9 +261,21 @@ begin
   LogDebug('Repo start: ' + aRepoRoot);
 
   if not fGit.TryIsInsideWorkTree(aRepoRoot, lIsInside, lErr) then
+  begin
+    aStatus.ScanFailed := True;
+    aStatus.ScanError := Trim(lErr);
+    if aStatus.ScanError = '' then
+      aStatus.ScanError := rsGitStatusFailed;
+    aStatus.HasProblem := True;
     exit(False);
+  end;
   if not lIsInside then
+  begin
+    aStatus.ScanFailed := True;
+    aStatus.ScanError := rsNotGitWorkTree;
+    aStatus.HasProblem := True;
     exit(False);
+  end;
 
   if not fGit.TryGetGitWriteDiagnostics(aRepoRoot, lDiag, lErr) then
     lDiag := default(TGitWriteDiagnostics);
@@ -539,14 +376,7 @@ begin
     begin
       aFetchPlan.NeedsFetch := True;
     end else begin
-      if fCacheLock <> nil then
-        fCacheLock.Enter;
-      try
-        aFetchPlan.CacheHit := aCache.TryGet(aRepoRoot.ToLowerInvariant, lCacheEntry);
-      finally
-        if fCacheLock <> nil then
-          fCacheLock.Leave;
-      end;
+      aFetchPlan.CacheHit := aCache.TryGet(aRepoRoot.ToLowerInvariant, lCacheEntry);
     end;
 
     if aFetchPlan.CacheHit then
@@ -592,17 +422,34 @@ begin
 
   lStatusLines := [];
   if not fGit.TryGetStatusPorcelain(aRepoRoot, lStatusLines, lErr) then
-    lStatusLines := [];
+  begin
+    aStatus.ScanFailed := True;
+    aStatus.ScanError := Trim(lErr);
+    if aStatus.ScanError = '' then
+      aStatus.ScanError := rsGitStatusFailed;
+    aStatus.HasProblem := True;
+    Exit(False);
+  end;
   lParse := TGitClient.ParseStatusPorcelain(lStatusLines);
 
   lAhead := 0;
   lBehind := 0;
+  lUnrelatedHistory := False;
   lCanCompare := lHasRemote and (lUpstream <> '');
   if lCanCompare then
   begin
     if IsCancelled then
       exit(False);
     fGit.TryGetAheadBehind(aRepoRoot, lUpstream, lAhead, lBehind, lErr);
+    if (lAhead > 0) and (lBehind > 0) and
+      fGit.TryRunGit(aRepoRoot, ['merge-base', 'HEAD', lUpstream], lMergeBaseRes, lErr, 0) then
+      lUnrelatedHistory := lMergeBaseRes.ExitCode = 1;
+  end;
+
+  if lUnrelatedHistory then
+  begin
+    lAhead := 0;
+    lBehind := 0;
   end;
 
   aStatus.RepoRoot := aRepoRoot;
@@ -611,10 +458,12 @@ begin
   aStatus.IsSubmodule := lIsSubmodule;
   aStatus.SuperprojectRoot := lSuperprojectRoot;
   aStatus.SubmoduleMainRemoteRef := lSubmoduleMainRef;
-  aStatus.SubmoduleNeedsMainFastForward := lShouldCheckMainFastForward and (not lCanFastForwardToMain);
+  aStatus.SubmoduleNeedsMainFastForward := lShouldCheckMainFastForward and
+    (not lCanFastForwardToMain) and (not lUnrelatedHistory);
   aStatus.HasOrigin := lHasRemote;
   aStatus.Upstream := lUpstream;
   aStatus.CanCompare := lCanCompare;
+  aStatus.UnrelatedHistory := lUnrelatedHistory;
   aStatus.Ahead := lAhead;
   aStatus.Behind := lBehind;
   aStatus.IsOutOfDate := lCanCompare and (lBehind > 0);
@@ -625,7 +474,7 @@ begin
   aStatus.FetchError := '';
   aStatus.HasProblem := aStatus.FetchFailed or aStatus.IsDirty or aStatus.IsOutOfDate or
     aStatus.HasUnpushed or (not aStatus.HasOrigin) or (aStatus.HasOrigin and (aStatus.Upstream = '')) or
-    aStatus.SubmoduleNeedsMainFastForward;
+    aStatus.SubmoduleNeedsMainFastForward or aStatus.UnrelatedHistory;
 
   aStatus.GitDirPath := lDiag.GitDirPath;
   aStatus.GitDirWritable := lDiag.GitDirInfo.Writable;
@@ -671,7 +520,10 @@ begin
   begin
     if not BuildLocalRepoStatus(aRepoRoot, aMatched, aCache, aTtlSeconds,
       lRefreshedStatus, lRefreshPlan) then
+    begin
+      aStatus := lRefreshedStatus;
       Exit(False);
+    end;
     aStatus := lRefreshedStatus;
     LogDebug('Fetch ok: ' + aRepoRoot);
   end else begin
@@ -701,6 +553,22 @@ begin
     Result := RefreshRepoStatus(aRepoRoot, aMatched, aCache, aTtlSeconds, lFetchPlan, aStatus);
 end;
 
+procedure TRepoScanner.StoreAnalysisResult(const aCache: TRepoCache; var aStatus: TRepoStatus);
+var
+  lStored: TRepoStatus;
+begin
+  if not aStatus.ScanFailed then
+  begin
+    aStatus.LastAnalyzedUtc := DateToISO8601(TTimeZone.Local.ToUniversalTime(Now), True);
+    aStatus.IsCached := False;
+  end;
+  aCache.StoreStatus(aStatus, aStatus.LastAnalyzedUtc);
+  if aStatus.CacheUpdate.Key <> '' then
+    aCache.ApplyUpdate(aStatus.CacheUpdate);
+  if aStatus.ScanFailed and aCache.TryGetStatus(aStatus.RepoRoot, lStored) then
+    aStatus := lStored;
+end;
+
 function TRepoScanner.CheckRepoStatusLocalFirst(const aRepoRoot: string;
   const aMatched: TArray<string>; const aCache: TRepoCache; const aTtlSeconds: Integer;
   const aQueue: TUiEventQueue; out aStatus: TRepoStatus): Boolean;
@@ -724,9 +592,18 @@ begin
   aFetchAttempted := False;
   Result := BuildLocalRepoStatus(aRepoRoot, aMatched, aCache, aTtlSeconds, aStatus, lFetchPlan);
   if not Result then
-    Exit;
+  begin
+    if IsCancelled then
+      Exit;
+    StoreAnalysisResult(aCache, aStatus);
+    lEvent := NewUiEvent(TUiEventKind.uekRepoResult);
+    lEvent.RepoStatus := aStatus;
+    aQueue.Enqueue(lEvent);
+    Exit(True);
+  end;
   aFetchSkippedByCache := lFetchPlan.CacheHit and not lFetchPlan.NeedsFetch;
   aFetchAttempted := lFetchPlan.NeedsFetch;
+  StoreAnalysisResult(aCache, aStatus);
   lEvent := NewUiEvent(TUiEventKind.uekRepoResult);
   lEvent.RepoStatus := aStatus;
   aQueue.Enqueue(lEvent);
@@ -734,278 +611,304 @@ begin
     Exit;
   Result := RefreshRepoStatus(aRepoRoot, aMatched, aCache, aTtlSeconds, lFetchPlan, aStatus);
   if not Result then
-    Exit;
+  begin
+    if IsCancelled then
+      Exit;
+    StoreAnalysisResult(aCache, aStatus);
+    lEvent := NewUiEvent(TUiEventKind.uekRepoResult);
+    lEvent.RepoStatus := aStatus;
+    aQueue.Enqueue(lEvent);
+    Exit(True);
+  end;
+  StoreAnalysisResult(aCache, aStatus);
   lEvent := NewUiEvent(TUiEventKind.uekRepoResult);
   lEvent.RepoStatus := aStatus;
   aQueue.Enqueue(lEvent);
 end;
 
-function TRepoScanner.ExecuteScan(const aSettings: TAppSettings; const aQueue: TUiEventQueue;
-  const aCancelToken: iCancelToken; const aGeneration: Int64): TScanSummary;
+function TRepoScanner.OperationCachePath: string;
+begin
+  Result := fCachePath;
+  if Result = '' then
+    Result := TPath.Combine(TAppSettings.GetSettingsFolder, 'repo-scan-cache.json');
+end;
+
+function TRepoScanner.DiscoveryCandidateLimit: Integer;
+begin
+  Result := cMaxGitProbeCandidates;
+end;
+
+function TRepoScanner.DiscoverRepositories(const aRequest: TRepoDiscoveryRequest;
+  const aQueue: TUiEventQueue; const aCancelToken: iCancelToken;
+  const aGeneration: Int64): TRepoOperationResult;
 var
   g: TGarbos;
-  lSw: TStopWatch;
-  lSettingsFolder: string;
-  lExeFolder: string;
-  lIgnorePath: string;
-  lIgnorePatterns: TArray<TIgnorePattern>;
-  lCandidates: TArray<string>;
-  lSkipped: boolean;
-  lRepoRoots: TArray<string>;
-  lTasks: TArray<TRepoTask>;
-  lIndex: integer;
-  lResults: TList<TRepoStatus>;
-  lLock: TCriticalSection;
-  lCacheLock: TCriticalSection;
-  lDone: integer;
-  lMaxThreads: integer;
-  lPool: TThreadPool;
-  lCache: TRepoCache;
-  lCacheErr: string;
-  lStatus: TRepoStatus;
+  lRequest: TRepoDiscoveryRequest;
+  lPending: TQueue<TDirItem>;
+  lFound: TList<string>;
+  lSeen: TDictionary<string, Boolean>;
+  lVisited: TDictionary<string, Integer>;
+  lRoot, lRootNorm, lCachePath, lEntryName: string;
+  lItem, lChild: TDirItem;
+  lRule: TFolderSelectionRule;
+  lRoots: TList<string>;
+  lFindData: TWin32FindData;
+  lFindHandle: THandle;
+  lFindError: Cardinal;
+  lAttributes: Cardinal;
+  lRemaining: Integer;
   lEvent: TUiEvent;
-  lProblemCount: integer;
-  lCleanCount: integer;
-  lTaskCount: integer;
-  lScanPath: string;
-  lCachePath: string;
-  lFingerprint: string;
-  lIgnoreContent: string;
-  lCachedCount: Integer;
-  lPhaseSw: TStopwatch;
-  lFetchCacheSkips: Integer;
-  lFetchAttempts: Integer;
+  lSw: TStopwatch;
 begin
-  Result := default(TScanSummary);
-  fQueue := aQueue;
+  Result := Default(TRepoOperationResult);
+  lSw := TStopwatch.StartNew;
+  lRequest := aRequest;
+  lRequest.Roots := Copy(aRequest.Roots);
+  lRequest.Rules := Copy(aRequest.Rules);
+  lRequest.IgnorePatterns := Copy(aRequest.IgnorePatterns);
   fCancelToken := aCancelToken;
   fGeneration := aGeneration;
-  fDebugEnabled := aSettings.DebugLogEnabled;
-  fLogger := maxLog.CloneWithTag('RepoScanner');
-  fCacheLock := nil;
-
-  lSw := TStopWatch.startNew;
-
-  lSettingsFolder := TAppSettings.GetSettingsFolder;
-  lExeFolder := ExtractFilePath(ParamStr(0));
-  if not DirectoryExists(lSettingsFolder) then
-  begin
-    ForceDirectories(lSettingsFolder);
-  end;
-
-  if fDebugEnabled then
-  begin
-    LogDebug('=== Scan debug log ===');
-    LogDebug('Timestamp: ' + DateToISO8601(TTimeZone.Local.ToUniversalTime(now), True));
-    for lScanPath in aSettings.ScanPaths do
-      LogDebug('ScanPath: ' + lScanPath);
-    LogDebug('FilterPattern: ' + aSettings.TargetRepoName);
-    LogDebug('MaxDepth: ' + IntToStr(aSettings.MaxDepth));
-    LogDebug('ThrottleLimit: ' + IntToStr(aSettings.ThrottleLimit));
-    LogDebug('CacheTtlSeconds: ' + IntToStr(aSettings.CacheTtlSeconds));
-    if aSettings.DebugLogPath <> '' then
-    begin
-      LogDebug('DebugLogPath: ' + aSettings.DebugLogPath);
-    end;
-  end;
-
-  LogDebug('ExeFolder: ' + lExeFolder);
-  LogDebug('SettingsFolder: ' + lSettingsFolder);
-
-  lIgnorePath := ResolveIgnorePath(lSettingsFolder, lExeFolder);
-  lIgnorePatterns := LoadIgnorePatterns(lIgnorePath);
-  if FileExists(lIgnorePath) then
-    lIgnoreContent := TFile.ReadAllText(lIgnorePath, TEncoding.UTF8)
-  else
-    lIgnoreContent := '';
-  lFingerprint := TRepoCache.BuildScanFingerprint(aSettings.ScanPaths, aSettings.TargetRepoName,
-    aSettings.MaxDepth, lIgnoreContent);
-  LogLine(cLogIgnoreFile + lIgnorePath);
-  LogLine(cLogIgnoreLoaded + IntToStr(length(lIgnorePatterns)));
-
-  lEvent := NewUiEvent(TUiEventKind.uekProgressStart);
-  lEvent.ProgressMode := TProgressMode.pmIndeterminate;
-  fQueue.Enqueue(lEvent);
-
-  gc(lCache, TRepoCache.Create, g);
+  fDebugEnabled := lRequest.DebugLogEnabled;
+  fLogger := maxLog.CloneWithTag('RepoDiscovery');
+  lCachePath := OperationCachePath;
   try
-    lCachePath := CombinePath([lSettingsFolder, 'repo-scan-cache.json']);
-    if not lCache.LoadFromFile(lCachePath, lCacheErr) then
-      LogLine(cLogCacheLoadFailed + lCacheErr, TLogType.Warning);
-    lCachedCount := PublishCachedInventory(lCache, lFingerprint, fQueue);
-    LogLine(Format(cLogCachedInventory, [lCachedCount]));
-
-    LogLine(cLogPhase1);
-    lPhaseSw := TStopwatch.StartNew;
-    lCandidates := FindRepoCandidates(aSettings.ScanPaths, aSettings.TargetRepoName, aSettings.MaxDepth,
-      lIgnorePatterns, lSkipped, fQueue);
-    LogLine(Format(cLogPhaseComplete, [cLogPhase1, lPhaseSw.ElapsedMilliseconds]));
-    Result.CandidateCount := length(lCandidates);
-    Result.SkippedDueToCap := lSkipped;
-    LogLine(cLogCandidates + IntToStr(Result.CandidateCount));
-    if lSkipped then
-      LogLine(cLogCapHit);
-
-    if IsCancelled then
-    begin
-      PublishScanFinished(cLogSummary + ': cancelled');
-      exit;
-    end;
-
-    lRepoRoots := lCandidates;
-      LogLine(cLogRepoRoots + IntToStr(Length(lRepoRoots)));
-      if Result.SkippedDueToCap then
-        LogLine(cLogCapHit);
-
-      if IsCancelled then
+    try
+      if not fCache.EnsureLoaded(lCachePath, Result.Error) then
+        Exit;
+      GC(lPending, TQueue<TDirItem>.Create, g);
+      GC(lFound, TList<string>.Create, g);
+      GC(lRoots, TList<string>.Create, g);
+      GC(lSeen, TDictionary<string, Boolean>.Create(TFastCaseAwareComparer.OrdinalIgnoreCase), g);
+      GC(lVisited, TDictionary<string, Integer>.Create(TFastCaseAwareComparer.OrdinalIgnoreCase), g);
+      lRoots.AddRange(lRequest.Roots);
+      // Deeper explicit inclusions remain reachable beneath excluded parents.
+      if lRequest.UsePathSelection then
+        for lRule in lRequest.Rules do
+          if lRule.Included then
+            lRoots.Add(lRule.Path);
+      for lRoot in lRoots do
       begin
-        PublishScanFinished(cLogSummary + ': cancelled');
-        exit;
-      end;
-
-      LogLine(cLogPhase3);
-      lPhaseSw := TStopwatch.StartNew;
-
-      gc(lResults, TList<TRepoStatus>.Create, g);
-      gc(lLock, TCriticalSection.Create, g);
-      gc(lCacheLock, TCriticalSection.Create, g);
-      fCacheLock := lCacheLock;
-
-      lTaskCount := length(lRepoRoots);
-      SetLength(lTasks, lTaskCount);
-      for lIndex := 0 to lTaskCount - 1 do
-      begin
-        lTasks[lIndex].RepoRoot := lRepoRoots[lIndex];
-        lTasks[lIndex].Matched := [lRepoRoots[lIndex]];
-      end;
-
-      lEvent := NewUiEvent(TUiEventKind.uekProgressStart);
-      lEvent.ProgressMode := TProgressMode.pmDeterminate;
-      lEvent.ProgressMax := lTaskCount;
-      lEvent.ProgressValue := 0;
-      fQueue.Enqueue(lEvent);
-
-      lDone := 0;
-      lFetchCacheSkips := 0;
-      lFetchAttempts := 0;
-      if aSettings.ThrottleLimit > 0 then
-        lMaxThreads := aSettings.ThrottleLimit
-      else
-        lMaxThreads := 1;
-
-      if lTaskCount > 0 then
-      begin
-        gc(lPool, TThreadPool.Create, g);
-        lPool.UnlimitedWorkerThreadsWhenBlocked := False;
-        lPool.SetMaxWorkerThreads(lMaxThreads);
-        lPool.SetMinWorkerThreads(lMaxThreads);
-
-        TParallel.for(0, lTaskCount - 1,
-          procedure(aIndex: integer; aLoopState: TParallel.TLoopState)
-          var
-            lLocalStatus: TRepoStatus;
-            lLocalEvent: TUiEvent;
-            lLocalDone: integer;
-            lLocalFetchAttempted: Boolean;
-            lLocalFetchSkipped: Boolean;
+        if IsCancelled then
+          Break;
+        if Trim(lRoot) = '' then
+          Continue;
+        lItem.Path := NormalizeSelectionPath(lRoot);
+        lItem.Depth := 0;
+        lRootNorm := NormalizePathForMatch(lItem.Path);
+        lPending.Enqueue(lItem);
+        // Ignore rules are relative to each captured search scope.
+        lVisited.Clear;
+        while (lPending.Count > 0) and not IsCancelled do
+        begin
+          lItem := lPending.Dequeue;
+          if lVisited.TryGetValue(lItem.Path, lRemaining) and (lRemaining <= lItem.Depth) then
+            Continue;
+          lVisited.AddOrSetValue(lItem.Path, lItem.Depth);
+          if ShouldIgnoreDirectory(lItem.Path, lRootNorm, lRequest.IgnorePatterns) then
+            Continue;
+          // Explicit deeper inclusions are separate roots; unchecked branches need no traversal.
+          if lRequest.UsePathSelection and not EvaluateFolderSelection(lItem.Path, lRequest.Rules) then
+            Continue;
+          lAttributes := GetFileAttributes(PChar(lItem.Path));
+          if (lAttributes = INVALID_FILE_ATTRIBUTES) or
+            ((lAttributes and FILE_ATTRIBUTE_DIRECTORY) = 0) then
           begin
-            if IsCancelled then
-              exit;
-
-            LogLine(cLogPhase3Repo + lTasks[aIndex].RepoRoot);
-
-            if CheckRepoStatusLocalFirst(lTasks[aIndex].RepoRoot, lTasks[aIndex].Matched,
-              lCache, aSettings.CacheTtlSeconds, fQueue, lLocalStatus,
-              lLocalFetchSkipped, lLocalFetchAttempted) then
+            Result.Error := 'Discovery could not access directory: ' + lItem.Path;
+            Exit;
+          end;
+          if (lAttributes and FILE_ATTRIBUTE_REPARSE_POINT) <> 0 then
+            Continue;
+          if (DirectoryExists(TPath.Combine(lItem.Path, '.git')) or
+              FileExists(TPath.Combine(lItem.Path, '.git'))) and not lSeen.ContainsKey(lItem.Path) then
+          begin
+            lSeen.Add(lItem.Path, True);
+            lFound.Add(lItem.Path);
+            Result.Summary.DiscoveredCount := lFound.Count;
+            lEvent := NewUiEvent(TUiEventKind.uekDiscoveryFound);
+            lEvent.RepoRoot := lItem.Path;
+            aQueue.Enqueue(lEvent);
+            if lFound.Count >= DiscoveryCandidateLimit then
             begin
-              if lLocalFetchSkipped then
-                TInterlocked.Increment(lFetchCacheSkips);
-              if lLocalFetchAttempted then
-                TInterlocked.Increment(lFetchAttempts);
-              if IsCancelled then
-                exit;
-              lLock.Enter;
-              try
-                lResults.Add(lLocalStatus);
-              finally
-                lLock.Leave;
-              end;
-
+              Result.Summary.SkippedDueToCap := True;
+              Result.Error := cLogCapHit;
+              Exit;
             end;
-
-            if IsCancelled then
-              exit;
-
-            lLocalDone := TInterlocked.Increment(lDone);
-            lLocalEvent := NewUiEvent(TUiEventKind.uekProgressUpdate);
-            lLocalEvent.ProgressValue := lLocalDone;
-            fQueue.Enqueue(lLocalEvent);
-
-            if (lLocalDone mod 100 = 0) or (lLocalDone = lTaskCount) then
-              LogDebug(Format(cLogPhase3Progress, [lLocalDone, lTaskCount]));
-          end,
-          lPool);
-      end else begin
-        lEvent := NewUiEvent(TUiEventKind.uekProgressUpdate);
-        lEvent.ProgressValue := 0;
-        fQueue.Enqueue(lEvent);
+          end;
+          if lItem.Depth >= lRequest.MaxDepth then
+            Continue;
+          // RTL GetDirectories silently treats native errors as empty directories.
+          lFindHandle := Winapi.Windows.FindFirstFile(PChar(TPath.Combine(lItem.Path, '*')), lFindData);
+          if lFindHandle = INVALID_HANDLE_VALUE then
+          begin
+            lFindError := GetLastError;
+            if lFindError = ERROR_FILE_NOT_FOUND then
+              Continue;
+            raise EOSError.CreateFmt('Discovery could not enumerate %s: %s (%d)',
+              [lItem.Path, SysErrorMessage(lFindError), lFindError]);
+          end;
+          try
+            repeat
+              lEntryName := lFindData.cFileName;
+              if ((lFindData.dwFileAttributes and FILE_ATTRIBUTE_DIRECTORY) <> 0) and
+                (lEntryName <> '.') and (lEntryName <> '..') and not SameText(lEntryName, '.git') then
+              begin
+                lChild.Path := NormalizeSelectionPath(TPath.Combine(lItem.Path, lEntryName));
+                lChild.Depth := lItem.Depth + 1;
+                lPending.Enqueue(lChild);
+              end;
+              if IsCancelled then
+                Break;
+              if not Winapi.Windows.FindNextFile(lFindHandle, lFindData) then
+              begin
+                lFindError := GetLastError;
+                if lFindError <> ERROR_NO_MORE_FILES then
+                  raise EOSError.CreateFmt('Discovery could not finish enumerating %s: %s (%d)',
+                    [lItem.Path, SysErrorMessage(lFindError), lFindError]);
+                Break;
+              end;
+            until False;
+          finally
+            Winapi.Windows.FindClose(lFindHandle);
+          end;
+        end;
       end;
-
-      LogLine(Format(cLogPhaseComplete, [cLogPhase3, lPhaseSw.ElapsedMilliseconds]));
-      LogLine(Format(cLogFetchCache, [lFetchCacheSkips, lFetchAttempts]));
-
-      if IsCancelled then
-      begin
-        PublishScanFinished(cLogSummary + ': cancelled');
-        exit;
-      end;
-
-      SetLength(lRepoRoots, lResults.Count);
-      for lIndex := 0 to lResults.Count - 1 do
-        lRepoRoots[lIndex] := lResults[lIndex].RepoRoot;
-      Result.RepoCount := Length(lRepoRoots);
-      lProblemCount := 0;
-      lCleanCount := 0;
-      for lStatus in lResults do
-      begin
-        if lStatus.HasProblem then
-          Inc(lProblemCount)
-        else
-          Inc(lCleanCount);
-        if lStatus.CacheUpdate.Key <> '' then
-          lCache.ApplyUpdate(lStatus.CacheUpdate);
-      end;
-
-      Result.ProblemCount := lProblemCount;
-      Result.CleanCount := lCleanCount;
-
-      lEvent := NewUiEvent(TUiEventKind.uekProgressEnd);
-      fQueue.Enqueue(lEvent);
-
-      lCache.SetInventory(lFingerprint, lRepoRoots);
-      if not lCache.SaveToFile(lCachePath, aSettings.CacheTtlSeconds, lCacheErr) then
-        LogLine(cLogCacheSaveFailed + lCacheErr, TLogType.Warning)
-      else
-        LogLine(cLogCacheSaved);
-
-      LogLine(Format(cLogQueuePeak, [fQueue.PeakCount]));
-
-      lEvent := NewUiEvent(TUiEventKind.uekScanFinished);
-      lEvent.Text := Format('%s: %d repos, %d needs attention, %d clean, %d candidates in %d ms',
-        [cLogSummary, Result.RepoCount, Result.ProblemCount, Result.CleanCount, Result.CandidateCount,
-          lSw.ElapsedMilliseconds]);
-      fQueue.Enqueue(lEvent);
-      Result.ElapsedMs := lSw.ElapsedMilliseconds;
+      if not IsCancelled then
+        Result.Succeeded := fCache.TryCommitDiscoveredInventory(lFound.ToArray,
+          lCachePath, lRequest.CacheTtlSeconds, Result.Error);
+    except
+      on E: Exception do
+        Result.Error := E.Message;
+    end;
   finally
-    fCacheLock := nil;
+    Result.Cancelled := IsCancelled and not Result.Succeeded;
+    Result.RepoRoots := fCache.GetInventory;
+    Result.Summary.CandidateCount := Result.Summary.DiscoveredCount;
+    Result.Summary.RepoCount := Length(Result.RepoRoots);
+    Result.Summary.ElapsedMs := lSw.ElapsedMilliseconds;
+    lEvent := NewUiEvent(TUiEventKind.uekDiscoveryFinished);
+    lEvent.OperationSucceeded := Result.Succeeded;
+    lEvent.OperationCancelled := Result.Cancelled;
+    lEvent.OperationError := Result.Error;
+    lEvent.RepoRoots := Copy(Result.RepoRoots);
+    lEvent.ScanSummary := Result.Summary;
+    lEvent.HasScanSummary := True;
+    aQueue.Enqueue(lEvent);
     fLogger := nil;
   end;
 end;
 
-function TRepoScanner.ExecuteScan(const aSettings: TAppSettings; const aQueue: TUiEventQueue;
-  const aCancelToken: iCancelToken): TScanSummary;
+function TRepoScanner.AnalyzeRepositories(const aRequest: TRepoAnalysisRequest;
+  const aQueue: TUiEventQueue; const aCancelToken: iCancelToken;
+  const aGeneration: Int64): TRepoOperationResult;
+var
+  g: TGarbos;
+  lRequest: TRepoAnalysisRequest;
+  lRoots: TList<string>;
+  lSeen: TDictionary<string, Boolean>;
+  lRoot, lCachePath, lError: string;
+  lPool: TThreadPool;
+  lLock: TCriticalSection;
+  lResults: TList<TRepoStatus>;
+  lStatus: TRepoStatus;
+  lEvent: TUiEvent;
+  lSw: TStopwatch;
+  lDone, lWorkers: Integer;
 begin
-  Result := ExecuteScan(aSettings, aQueue, aCancelToken, 0);
+  Result := Default(TRepoOperationResult);
+  lSw := TStopwatch.StartNew;
+  lRequest := aRequest;
+  lRequest.RepoRoots := Copy(aRequest.RepoRoots);
+  fCancelToken := aCancelToken;
+  fGeneration := aGeneration;
+  fDebugEnabled := lRequest.DebugLogEnabled;
+  fLogger := maxLog.CloneWithTag('RepoAnalysis');
+  lCachePath := OperationCachePath;
+  GC(lResults, TList<TRepoStatus>.Create, g);
+  try
+    try
+      if not fCache.EnsureLoaded(lCachePath, Result.Error) then
+        Exit;
+      GC(lRoots, TList<string>.Create, g);
+      GC(lSeen, TDictionary<string, Boolean>.Create(TFastCaseAwareComparer.OrdinalIgnoreCase), g);
+      for lRoot in lRequest.RepoRoots do
+        if (Trim(lRoot) <> '') and not lSeen.ContainsKey(lRoot) then
+        begin
+          lSeen.Add(lRoot, True);
+          lRoots.Add(lRoot);
+        end;
+      lRequest.RepoRoots := lRoots.ToArray;
+      Result.Summary.CandidateCount := Length(lRequest.RepoRoots);
+      lEvent := NewUiEvent(TUiEventKind.uekProgressStart);
+      lEvent.ProgressMode := TProgressMode.pmDeterminate;
+      lEvent.ProgressMax := Length(lRequest.RepoRoots);
+      aQueue.Enqueue(lEvent);
+      lDone := 0;
+      GC(lLock, TCriticalSection.Create, g);
+      lWorkers := lRequest.ThrottleLimit;
+      if lWorkers < 1 then
+        lWorkers := 1;
+      if Length(lRequest.RepoRoots) > 0 then
+      begin
+        GC(lPool, TThreadPool.Create, g);
+        lPool.UnlimitedWorkerThreadsWhenBlocked := False;
+        lPool.SetMaxWorkerThreads(lWorkers);
+        lPool.SetMinWorkerThreads(lWorkers);
+        TParallel.For(0, High(lRequest.RepoRoots),
+          procedure(aIndex: Integer)
+          var
+            lStatus: TRepoStatus;
+            lEvent: TUiEvent;
+            lSkipped, lFetched: Boolean;
+          begin
+            if IsCancelled then
+              Exit;
+            if CheckRepoStatusLocalFirst(lRequest.RepoRoots[aIndex], [lRequest.RepoRoots[aIndex]],
+              fCache, lRequest.CacheTtlSeconds, aQueue, lStatus, lSkipped, lFetched) then
+            begin
+              lLock.Enter;
+              try
+                lResults.Add(lStatus);
+              finally
+                lLock.Leave;
+              end;
+            end;
+            lEvent := NewUiEvent(TUiEventKind.uekProgressUpdate);
+            lEvent.ProgressValue := TInterlocked.Increment(lDone);
+            aQueue.Enqueue(lEvent);
+          end, lPool);
+      end;
+      Result.Succeeded := not IsCancelled;
+    except
+      on E: Exception do
+        Result.Error := E.Message;
+    end;
+  finally
+    if not fCache.FlushPending(lCachePath, lRequest.CacheTtlSeconds, lError) then
+    begin
+      Result.Succeeded := False;
+      if Result.Error <> '' then
+        Result.Error := Result.Error + sLineBreak;
+      Result.Error := Result.Error + lError;
+    end;
+    Result.Cancelled := IsCancelled;
+    Result.RepoRoots := fCache.GetInventory;
+    Result.Summary.RepoCount := lResults.Count;
+    for lStatus in lResults do
+      if lStatus.HasProblem then
+        Inc(Result.Summary.ProblemCount)
+      else
+        Inc(Result.Summary.CleanCount);
+    Result.Summary.ElapsedMs := lSw.ElapsedMilliseconds;
+    lEvent := NewUiEvent(TUiEventKind.uekAnalysisFinished);
+    lEvent.OperationSucceeded := Result.Succeeded;
+    lEvent.OperationCancelled := Result.Cancelled;
+    lEvent.OperationError := Result.Error;
+    lEvent.RepoRoots := Copy(Result.RepoRoots);
+    lEvent.ScanSummary := Result.Summary;
+    lEvent.HasScanSummary := True;
+    aQueue.Enqueue(lEvent);
+    fLogger := nil;
+  end;
 end;
 
 end.

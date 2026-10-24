@@ -34,6 +34,8 @@ type
 
   TRepoStatus = record
     RepoRoot: string;
+    LastAnalyzedUtc: string;
+    IsCached: Boolean;
     MatchedFolders: TArray<string>;
     Branch: string;
     IsSubmodule: Boolean;
@@ -43,6 +45,7 @@ type
     HasOrigin: Boolean;
     Upstream: string;
     CanCompare: Boolean;
+    UnrelatedHistory: Boolean;
     Behind: Integer;
     Ahead: Integer;
     IsOutOfDate: Boolean;
@@ -51,6 +54,10 @@ type
     DirtySummary: string;
     FetchFailed: Boolean;
     FetchError: string;
+    LastPullError: string;
+    LastPushError: string;
+    ScanFailed: Boolean;
+    ScanError: string;
     HasProblem: Boolean;
     GitDirPath: string;
     GitDirWritable: Boolean;
@@ -65,6 +72,7 @@ type
 
   TScanSummary = record
     CandidateCount: Integer;
+    DiscoveredCount: Integer;
     RepoCount: Integer;
     ProblemCount: Integer;
     CleanCount: Integer;

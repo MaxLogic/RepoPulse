@@ -119,8 +119,10 @@
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_1)'!=''">
         <DCC_Define>RELEASE;$(DCC_Define)</DCC_Define>
-        <DCC_DebugInformation>0</DCC_DebugInformation>
-        <DCC_LocalDebugSymbols>false</DCC_LocalDebugSymbols>
+        <DCC_DebugInformation>1</DCC_DebugInformation>
+        <DCC_LocalDebugSymbols>true</DCC_LocalDebugSymbols>
+        <DCC_GenerateStackFrames>true</DCC_GenerateStackFrames>
+        <DCC_MapFile>3</DCC_MapFile>
         <DCC_SymbolReferenceInfo>0</DCC_SymbolReferenceInfo>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_1_Win32)'!=''">
@@ -164,7 +166,14 @@
         <DCCReference Include="..\src\UScanPathsDialog.pas">
             <Form>frmScanPathsDialog</Form>
         </DCCReference>
+        <DCCReference Include="..\src\UStatusFilterHelp.pas">
+            <Form>frmStatusFilterHelp</Form>
+        </DCCReference>
+        <DCCReference Include="..\src\UTextDetailsDialog.pas">
+            <Form>frmTextDetailsDialog</Form>
+        </DCCReference>
         <DCCReference Include="..\src\UAppSettings.pas"/>
+        <DCCReference Include="..\src\UBulkActionResults.pas"/>
         <DCCReference Include="..\src\UEscapeDialog.pas"/>
         <DCCReference Include="..\src\UGitClient.pas"/>
         <DCCReference Include="..\src\UTortoiseGit.pas"/>
